@@ -10,9 +10,10 @@ registerHooks({ resolve(specifier, context, nextResolve) {
 } });
 const { getNeo4jDriver } = await import("../../lib/server/database/neo4j.ts");
 const { normalizeBill } = await import("../../lib/server/bills/normalize.ts");
-const { organizeFinancialDocument } = await import("../../lib/financial-workbook.ts");
+const { organizeFinancialDocument } = await import("../../lib/financial/workbook.ts");
 const { storeBill, readBillOutputs, listUserBills, deleteOwnedBill } = await import("../../lib/server/bills/store.ts");
 const { deleteAccount } = await import("../../lib/server/auth/store.ts");
+const { claimUpload, releaseUpload } = await import("../../lib/server/uploads/store.ts");
 let actual;
 let checked = 0;
 try {
@@ -24,7 +25,7 @@ try {
     if (query.startsWith("CREATE CONSTRAINT")) return { records: [] };
     await actual.executeQuery(`EXPLAIN ${query}`, values, config);
     checked++;
-    return { records: [{ get: (key) => ({ billId: values.billId, itemCount: values.itemCount, deleted: true, deletedBill: true })[key] }] };
+    return { records: [{ get: (key) => ({ billId: values.billId, jobId: values.jobId, createdAt: values.now, itemCount: values.itemCount, deleted: true, deletedBill: true })[key] }] };
   } };
   const example = JSON.parse(await readFile(new URL("../../data/bills/example.json", import.meta.url), "utf8"));
   const classification = { documentType: "receipt", isFinancialDocument: true, sampledBytes: 10, model: null };
@@ -41,6 +42,8 @@ try {
   await listUserBills("query-check-no-real-user", 0, 25);
   await deleteOwnedBill(id, "query-check-no-real-user");
   await deleteAccount("0".repeat(64));
+  const upload = await claimUpload(Buffer.from("query-check-only"), "query-check-no-real-user");
+  if (!("duplicate" in upload)) await releaseUpload(upload, "query-check-no-real-user");
   console.log(`${checked} graph queries passed Neo4j EXPLAIN. No nodes, relationships, or constraints were changed.`);
 } catch (error) {
   console.error("Bill query validation failed.", typeof error?.code === "string" ? error.code : "Check server configuration and connectivity.");

@@ -1,12 +1,12 @@
 import { inngest } from "@/lib/inngest/client";
 import { NonRetriableError } from "inngest";
-import { MAX_CLASSIFICATION_BYTES } from "@/lib/classification";
+import { MAX_CLASSIFICATION_BYTES } from "@/lib/classification/document";
 import { classifyDocument, organizeFinancialChunk } from "@/lib/server/ai/openrouter";
 import { completeClassificationJob, failClassificationJob, readClassificationInput, readClassificationJob, stageClassificationWorkbook } from "@/lib/server/classification/store";
 import { saveOrganizedBill, BillSaveError } from "@/lib/server/bills/service";
 import { BillOwnerMissingError } from "@/lib/server/bills/store";
-import { organizeFinancialDocument } from "@/lib/financial-workbook";
-import { mergeOrganizationChunks, prepareOrganizationInput, type OrganizationChunkResult } from "@/lib/financial-organization";
+import { organizeFinancialDocument } from "@/lib/financial/workbook";
+import { mergeOrganizationChunks, prepareOrganizationInput, type OrganizationChunkResult } from "@/lib/financial/organization";
 
 // Invoke from the Dev Server to verify registration and step execution.
 export const configurationCheck = inngest.createFunction(

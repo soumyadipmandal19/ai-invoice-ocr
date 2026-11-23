@@ -6,6 +6,7 @@
     "setup:python": "python3 -m venv .venv && .venv/bin/python -m pip install -r python/requirements.txt",
     "test:python": ".venv/bin/python -m unittest discover -s python/tests -v",
     "test:classification": "node --test tests/classification.test.mjs",
+    "test:currency": "node --test tests/currency.test.mjs",
     "postinstall": "node scripts/build/copy-pdf-worker.mjs",
     "predev": "node scripts/build/copy-pdf-worker.mjs",
     "prebuild": "node scripts/build/copy-pdf-worker.mjs",

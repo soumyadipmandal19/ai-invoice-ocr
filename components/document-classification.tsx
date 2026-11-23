@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DOCUMENT_TYPE_LABELS, isDocumentType, type ClassificationJob, type ClassificationReference } from "@/lib/classification";
+import { DOCUMENT_TYPE_LABELS, isDocumentType, type ClassificationJob, type ClassificationReference } from "@/lib/classification/document";
 
 export default function DocumentClassification({ reference, onSettled, onError }: {
   reference: ClassificationReference;

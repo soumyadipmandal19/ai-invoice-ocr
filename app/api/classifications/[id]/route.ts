@@ -8,7 +8,7 @@ export async function GET(_request: Request, context: RouteContext<"/api/classif
   try {
     const job = await readClassificationJob(id);
     if (!job || job.ownerUserId !== user.id) return Response.json({ error: "Classification not found or expired." }, { status: 404, headers: { "Cache-Control": "no-store" } });
-    return Response.json({ ...job, ownerUserId: undefined }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ ...job, ownerUserId: undefined, uploadKey: undefined }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "Unable to check document type." }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }

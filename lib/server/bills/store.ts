@@ -9,7 +9,7 @@ import { int } from "neo4j-driver";
 export class BillOwnerMissingError extends Error {}
 export type BillSaveResult = { billId: string; itemCount: number; status: "saved" };
 
-export async function storeBill(bill: BillNode, items: BillItemNode[], artifacts: WorkflowArtifacts): Promise<BillSaveResult> {
+export async function storeBill(bill: BillNode, items: BillItemNode[], artifacts: WorkflowArtifacts, uploadKey?: string): Promise<BillSaveResult> {
   await ensureDatabaseSchema();
   const ocr: OCRExtractionNode = {
     extractionId: bill.billId, billId: bill.billId, sourceFile: bill.sourceFile,
@@ -26,6 +26,9 @@ export async function storeBill(bill: BillNode, items: BillItemNode[], artifacts
     `MATCH (u:User {id: $ownerUserId})
      SET u.id = u.id
      WITH u WHERE NOT ($billId IN coalesce(u.deletedBillIds, []))
+       AND ($uploadKey IS NULL OR EXISTS {
+         MATCH (u)-[:HAS_UPLOAD]->(:DocumentUpload {uploadKey: $uploadKey, jobId: $billId})
+       })
      MERGE (b:Bill {billId: $billId})
      ON CREATE SET b += $bill, b.itemCount = $itemCount
      WITH u, b WHERE b.ownerUserId = u.id
@@ -41,7 +44,7 @@ export async function storeBill(bill: BillNode, items: BillItemNode[], artifacts
        ON CREATE SET item += properties
        MERGE (b)-[:HAS_ITEM]->(item))
      RETURN b.billId AS billId, b.itemCount AS itemCount`,
-    { ownerUserId: bill.ownerUserId, billId: bill.billId, bill, items, ocr, llm, itemCount: items.length },
+    { ownerUserId: bill.ownerUserId, billId: bill.billId, bill, items, ocr, llm, itemCount: items.length, uploadKey: uploadKey || null },
     { database: process.env.NEO4J_DATABASE || "neo4j" },
   );
   if (!records.length) throw new BillOwnerMissingError("The bill was deleted or its upload owner is unavailable.");
@@ -56,16 +59,19 @@ export async function deleteOwnedBill(billId: string, ownerUserId: string): Prom
      WITH u
      OPTIONAL MATCH (u)-[:UPLOADED]->(b:Bill {billId: $billId})
      WITH u, b WHERE b IS NOT NULL OR $billId IN coalesce(u.deletedBillIds, [])
+     OPTIONAL MATCH (u)-[:HAS_UPLOAD]->(upload:DocumentUpload {jobId: $billId})
+     WITH u, b, collect(upload) AS uploads
      OPTIONAL MATCH (b)-[:HAS_ITEM]->(item:BillItem)
      OPTIONAL MATCH (b)-[:HAS_OCR]->(ocr:OCRExtraction)
      OPTIONAL MATCH (b)-[:HAS_LLM_RESULT]->(llm:LLMResult)
-     WITH u, b, collect(DISTINCT item) AS items, collect(DISTINCT ocr) AS ocrSnapshots,
+     WITH u, b, uploads, collect(DISTINCT item) AS items, collect(DISTINCT ocr) AS ocrSnapshots,
        collect(DISTINCT llm) AS llmSnapshots
      SET u.deletedBillIds = CASE WHEN $billId IN coalesce(u.deletedBillIds, [])
        THEN u.deletedBillIds ELSE coalesce(u.deletedBillIds, []) + [$billId] END
      FOREACH (child IN items | DETACH DELETE child)
      FOREACH (child IN ocrSnapshots | DETACH DELETE child)
      FOREACH (child IN llmSnapshots | DETACH DELETE child)
+     FOREACH (upload IN uploads | DETACH DELETE upload)
      FOREACH (bill IN CASE WHEN b IS NULL THEN [] ELSE [b] END | DETACH DELETE bill)
      RETURN true AS deletedBill`,
     { ownerUserId, billId }, { database: process.env.NEO4J_DATABASE || "neo4j" },
@@ -78,7 +84,8 @@ export async function readBillOutputs(billId: string, ownerUserId: string) {
     `MATCH (:User {id: $ownerUserId})-[:UPLOADED]->(b:Bill {billId: $billId})
      OPTIONAL MATCH (b)-[:HAS_OCR]->(ocr:OCRExtraction)
      OPTIONAL MATCH (b)-[:HAS_LLM_RESULT]->(llm:LLMResult)
-     RETURN b.billId AS billId, ocr.dataJson AS ocrJson, llm.dataJson AS llmJson,
+     RETURN b.billId AS billId, b.sourceFile AS sourceFile, b.createdAt AS createdAt,
+       ocr.dataJson AS ocrJson, llm.dataJson AS llmJson,
        coalesce(llm.workbookJson, b.workbookJson) AS workbookJson`,
     { ownerUserId, billId }, { database: process.env.NEO4J_DATABASE || "neo4j", routing: "READ" },
   );
@@ -88,7 +95,7 @@ export async function readBillOutputs(billId: string, ownerUserId: string) {
     const value = record.get(key);
     return typeof value === "string" ? JSON.parse(value) : null;
   };
-  return { billId: record.get("billId"), ocr: parse("ocrJson"), llm: parse("llmJson"), workbook: parse("workbookJson") };
+  return { billId: record.get("billId"), sourceFile: record.get("sourceFile"), createdAt: record.get("createdAt"), ocr: parse("ocrJson"), llm: parse("llmJson"), workbook: parse("workbookJson") };
 }
 
 export async function listUserBills(ownerUserId: string, offset = 0, limit = 25): Promise<SavedBillPage> {

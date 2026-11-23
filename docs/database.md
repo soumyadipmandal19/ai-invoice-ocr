@@ -38,3 +38,21 @@ Ownership comes from the authenticated session. History and detail endpoints tra
 - Browser spreadsheet edits are not automatically persisted; a refresh restores the originally saved workbook.
 
 No vector index or semantic-search workflow is currently implemented.
+
+## Duplicate upload reservations
+
+`(User)-[:HAS_UPLOAD]->(DocumentUpload)` reserves a SHA-256 fingerprint of the
+file bytes and owner before OCR starts. A unique `uploadKey` and an owner write
+lock prevent concurrent requests from creating separate jobs for identical files.
+The reservation stores the job ID and creation time, without storing the original
+file. Saved bills remain reusable after local classification jobs expire.
+
+Abandoned extraction reservations can be retried after five minutes. Failed jobs
+without staged financial output can be retried; staged output retains its job ID
+for save retries. A financial save must still own its upload reservation, so a
+superseded workflow cannot create a duplicate bill later. Deleting a bill removes
+its reservation; deleting an account removes all its reservations.
+
+Detection applies to uploads made after this feature is enabled. Existing saved
+files cannot be fingerprinted retroactively because their original bytes were
+removed. Byte-different copies of the same invoice remain separate documents.

@@ -3,8 +3,8 @@ import "server-only";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Classification, ClassificationJob } from "@/lib/classification";
-import type { FinancialWorkbook } from "@/lib/financial-workbook";
+import type { Classification, ClassificationJob } from "@/lib/classification/document";
+import type { FinancialWorkbook } from "@/lib/financial/workbook";
 import type { ExtractionResult } from "@/types/extraction/result";
 import type { WorkflowArtifacts } from "@/types/workflow/artifacts";
 
@@ -49,13 +49,13 @@ export async function readClassificationJob(id: string): Promise<ClassificationJ
   }
 }
 
-export async function createClassificationJob(document?: ExtractionResult, ownerUserId?: string): Promise<ClassificationJob> {
+export async function createClassificationJob(document?: ExtractionResult, ownerUserId?: string, upload?: { jobId: string; uploadKey: string }): Promise<ClassificationJob> {
   await mkdir(directory(), { recursive: true, mode: 0o700 });
   // Remove expired results and OCR input while creating new jobs.
   for (const name of (await readdir(directory())).filter((name) => name.endsWith(".json"))) {
     await readClassificationJob(name.slice(0, -5));
   }
-  const job: ClassificationJob = { id: randomUUID(), status: "pending", expiresAt: Date.now() + JOB_TTL, ownerUserId };
+  const job: ClassificationJob = { id: upload?.jobId || randomUUID(), status: "pending", expiresAt: Date.now() + JOB_TTL, ownerUserId, uploadKey: upload?.uploadKey };
   await save(job);
   if (document) {
     // OCR data stays on the host. Only the bounded classification excerpt enters Inngest.

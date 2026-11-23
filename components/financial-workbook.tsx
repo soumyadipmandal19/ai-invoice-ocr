@@ -3,13 +3,14 @@
 import { useId, useState } from "react";
 import WorkbookTabs from "@/components/workbook-tabs";
 import { SheetGrid } from "@/components/sheet-grid";
-import { PRODUCT_COLUMNS, RECEIPT_COLUMNS, sheetToCsv, type FinancialWorkbook } from "@/lib/financial-workbook";
+import { PRODUCT_COLUMNS, RECEIPT_COLUMNS, sheetToCsv, type FinancialWorkbook } from "@/lib/financial/workbook";
+import { sessionColumnLabel } from "@/lib/bills/session-workbook";
 
 export default function FinancialWorkbookView({ workbook, onChange, fileName }: {
   workbook: FinancialWorkbook; onChange: (workbook: FinancialWorkbook) => void; fileName: string;
 }) {
   const accordionGroup = useId();
-  const [sheetId, setSheetId] = useState("items");
+  const [sheetId, setSheetId] = useState("receipts");
   const [selected, setSelected] = useState({ row: 1, column: 1 });
   const sheet = workbook.sheets.find((entry) => entry.id === sheetId) || workbook.sheets[0];
   if (!sheet) return <p className="p-4 text-sm text-muted">No sheets available.</p>;
@@ -46,7 +47,7 @@ export default function FinancialWorkbookView({ workbook, onChange, fileName }: 
   }
 
   function download() {
-    const url = URL.createObjectURL(new Blob([sheetToCsv(sheet)], { type: "text/csv;charset=utf-8" }));
+    const url = URL.createObjectURL(new Blob([sheetToCsv({ ...sheet, columns: sheet.columns.map(sessionColumnLabel) })], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
     link.download = `${fileName.replace(/\.[^.]+$/, "")}-${sheet.id}.csv`;
@@ -60,9 +61,9 @@ export default function FinancialWorkbookView({ workbook, onChange, fileName }: 
         <div><h4 className="text-sm font-semibold text-accent-text">{sheet.name}</h4><p className="sr-only">{trackingSheet ? sheet.id === "items" ? "One row per product, with the same columns for every receipt." : "One row per document. Match products using document_id." : "Original OCR data for checking your tracking sheets."}</p></div>
         <div className="flex flex-wrap gap-2">{trackingSheet && sheet.id === "items" && <button type="button" onClick={addProduct} className="inline-flex h-8 items-center rounded-md border border-line-strong px-3 text-xs text-body hover:bg-surface">Add product row</button>}<button type="button" onClick={download} className="inline-flex h-8 items-center rounded-md border border-line-strong px-3 text-xs text-body hover:bg-surface">Download CSV</button></div>
       </div>
-      <SheetGrid key={sheet.id} rows={[sheet.columns, ...sheet.rows]} bottomBar={<WorkbookTabs label="Financial CSV sheets" sheets={workbook.sheets} activeId={sheet.id} onChange={(id) => { setSheetId(id); setSelected({ row: 1, column: 1 }); }} />} widths={sheet.columns.map((column) => ["product_name", "document_id", "source_file", "notes"].includes(column) ? 300 : column === "merchant_name" ? 220 : 150)} editable={(row) => sheet.id !== "source" && !(trackingSheet && row === 0)} onEdit={edit} selected={selected} onSelect={setSelected} />
+      <SheetGrid key={sheet.id} rows={[sheet.columns.map(sessionColumnLabel), ...sheet.rows]} bottomBar={<WorkbookTabs label="Bill details and source evidence" sheets={workbook.sheets.map((entry) => ({ ...entry, name: entry.id === "receipts" ? "Bills" : entry.id === "items" ? "Bill Items" : entry.id === "fields" ? "OCR fields" : entry.id === "source" ? "OCR text" : entry.name }))} activeId={sheet.id} onChange={(id) => { setSheetId(id); setSelected({ row: 1, column: 1 }); }} />} widths={sheet.columns.map((column) => ["product_name", "document_id", "source_file", "notes"].includes(column) ? 300 : column === "merchant_name" ? 220 : 150)} editable={(row, column) => trackingSheet && row > 0 && !["document_id", "source_file", "line_number", "source_page"].includes(sheet.columns[column])} onEdit={edit} selected={selected} onSelect={setSelected} />
       <details name={accordionGroup} className="max-h-[20dvh] shrink-0 overflow-auto border-t border-line px-4 py-2 text-xs leading-5 text-muted"><summary className="cursor-pointer">About this sheet</summary><p className="mt-2">{workbook.organization?.method === "llm" && "AI organized these columns from OCR evidence. Verify every row before use. "}Each CSV contains one sheet and includes your edits. Source lines are read-only. Import identifier columns as text to preserve leading zeros.</p></details>
-      {trackingSheet && <details name={accordionGroup} className="max-h-[20dvh] shrink-0 overflow-auto border-t border-line px-4 py-2 text-xs leading-6 text-muted"><summary className="cursor-pointer font-medium">Maintain a receipt tracker</summary><p className="mt-2">Use Products for product quantities and prices. Use Receipts for document totals, tax, and payments. Blank cells need review; missing values are not estimated. Keep the fixed column headers when appending rows to your master file. Check source_file and document_number before appending to avoid duplicate receipts. Your master file is maintained separately.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => downloadTemplate("items")} className="result-button">Products template CSV</button><button type="button" onClick={() => downloadTemplate("receipts")} className="result-button">Receipts template CSV</button></div></details>}
+      {trackingSheet && <details name={accordionGroup} className="max-h-[20dvh] shrink-0 overflow-auto border-t border-line px-4 py-2 text-xs leading-6 text-muted"><summary className="cursor-pointer font-medium">Maintain a receipt tracker</summary><p className="mt-2">Use Bill Items for quantities and prices. Use Bills for document totals, tax, and payments. Blank cells need review; missing values are not estimated. Keep the fixed column headers when appending rows to your master file. Check source_file and document_number before appending to avoid duplicate receipts. Your master file is maintained separately.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => downloadTemplate("items")} className="result-button">Bill Items template CSV</button><button type="button" onClick={() => downloadTemplate("receipts")} className="result-button">Bills template CSV</button></div></details>}
       {workbook.warnings.length > 0 && <details name={accordionGroup} className="max-h-[20dvh] shrink-0 overflow-auto border-t border-line px-4 py-2 text-xs leading-5 text-muted"><summary className="cursor-pointer font-medium">Review notes ({workbook.warnings.length})</summary><ul className="mt-2 list-disc space-y-1 pl-4">{workbook.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></details>}
     </div>
   );

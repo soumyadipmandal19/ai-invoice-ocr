@@ -1,6 +1,7 @@
-import type { Classification } from "@/lib/classification";
+import type { Classification } from "@/lib/classification/document";
 import type { ExtractionResult } from "@/types/extraction/result";
-import type { OrganizedFinancialData } from "@/lib/financial-organization";
+import type { OrganizedFinancialData } from "@/lib/financial/organization";
+import { reconcileFinancialCurrencies } from "@/lib/financial/currency";
 
 export type CsvSheet = { id: string; name: string; columns: string[]; rows: string[][] };
 export type FinancialWorkbook = {
@@ -29,7 +30,8 @@ export function organizeFinancialDocument(
   if (!classification.isFinancialDocument) return null;
   const organization = context.organization;
   if (!organization) throw new Error("LLM financial organization is required before creating tracking sheets.");
-  const receipt = organization.receipt;
+  const currencies = reconcileFinancialCurrencies(organization.receipt, organization.items, document.pages.map((page) => page.text).join("\n"));
+  const receipt = currencies.receipt;
   const common = {
     document_id: context.documentId || "", document_type: classification.documentType,
     source_file: document.sourceFileName || "", review_status: "Needs review",
@@ -38,7 +40,7 @@ export function organizeFinancialDocument(
   const sheets: CsvSheet[] = [
     {
       id: "items", name: "Products", columns: [...PRODUCT_COLUMNS],
-      rows: organization.items.map((item, index) => row(PRODUCT_COLUMNS, {
+      rows: currencies.items.map((item, index) => row(PRODUCT_COLUMNS, {
         ...Object.fromEntries(["document_date", "merchant_name", "document_number", "currency", "payment_method"].map((key) => [key, receipt[key] || ""])),
         ...item, ...common, line_number: String(index + 1), notes: "Mapped by LLM; verify against the source.",
       })),
@@ -64,7 +66,7 @@ export function organizeFinancialDocument(
   return {
     schemaVersion: 2, sheets,
     warnings: [...new Set([
-      ...document.structured.warnings, ...organization.warnings,
+      ...document.structured.warnings, ...organization.warnings, ...currencies.warnings,
       "Financial columns were organized by the LLM and checked against cited OCR records. Verify the field meanings, amounts, and completeness before use.",
       "Missing or unsupported values stay blank. Original numeric formats and ambiguous dates have not been converted.",
     ])],

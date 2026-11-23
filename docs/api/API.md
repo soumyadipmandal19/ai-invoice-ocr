@@ -108,6 +108,32 @@ curl -i -b /tmp/paper-text-cookies.txt \
 
 Optional full OCR: add `-F 'forceOcr=true'`.
 
+Before OCR, the server hashes the file bytes with SHA-256 and reserves the hash
+for the signed-in user in Neo4j. Identical bytes (even under a different filename)
+return **409 Conflict**, without starting another extraction or workflow:
+
+```json
+{
+  "duplicate": true,
+  "jobId": "c24594ac-93d8-4db2-8e6a-b01953e47eaa",
+  "message": "This file is already saved. Opened the existing document."
+}
+```
+
+The response includes `bill` (the saved bill, workbook, and OCR) when available,
+or `document` (the existing extraction with its classification reference) for a
+pending job. Clients should reuse that document instead of adding another row.
+During extraction, only the message and job ID may be available; wait and retry
+to open the result. `forceOcr` does not bypass duplicate protection.
+
+Reservations are owner-scoped and atomic across server instances. Failed
+extraction/submission releases the reservation. Failed jobs without staged
+financial output can be uploaded again; staged financial results retain their
+existing job for save retries. Saved results remain deduplicated after temporary
+jobs expire. Deleting a saved bill or account removes its reservation. Files
+saved before this feature have no hash reservation and are not retroactively
+matched; rescanned or otherwise byte-different copies are treated as new files.
+
 HTTP **200 OK**, with a minimal illustrative extraction:
 
 ```json
@@ -143,13 +169,15 @@ request; local job files preserve extracted data for background processing.
 | 200 | Extraction succeeded; inspect `classification` for background submission status |
 | 400 | Missing/empty file, invalid multipart data, unsupported extension, or signature mismatch |
 | 401 | No authenticated session |
+| 409 | Identical file already uploaded by this user; inspect `duplicate`, `jobId`, and optional `bill`/`document` |
 | 413 | File or multipart body exceeds its limit |
 | 422 | Python validation/OCR failure, including unreadable/protected PDF or page/output limits |
 | 429 | Two extraction requests are already active in this process |
 | 500 | Python setup, worker, or unexpected extraction failure |
+| 503 | Duplicate check/database unavailable; extraction has not started |
 | 504 | Worker processing timed out |
 
-Handled extraction errors use `{ "error": "..." }`. Authentication/backend
+Handled extraction errors use `{ "error": "..." }`; duplicate responses use the shape above. Authentication/backend
 failures before the route's processing block can use framework error responses.
 The extraction route does not call the shared Origin validator used by auth and
 bill mutations. It uses the application's cookie session and its browser cookie
@@ -739,7 +767,7 @@ fields are also returned. A staged database-save failure has job `status: failed
 and `persistence.status: failed`, while preserving the staged result. Completed
 nonfinancial results have no persistence field and do not create bills.
 
-The Documents sheet's **Storage** column reports the saved/failed state when the
+The Bills sheet's optional **Storage** column reports the saved/failed state when the
 workflow settles. The dashboard loads saved history for the signed-in user through `GET /api/bills`. Spreadsheet corrections are in-tab
 edits and do not update the saved graph yet. Original files are not persisted.
 
@@ -1012,7 +1040,7 @@ restoring data. It does not remove exports already downloaded by a user.
 
 ### Row action
 
-The combined **Documents** and **Bills** sheets have a sticky **Actions** column
+The combined **Bills** table and **Needs review** view have a sticky **Actions** column
 with a Delete button per record. The button becomes available after the bill is
 saved. It opens a popup identifying the file and explaining that all child data
 will be removed. Cancel makes no request. Confirmation disables duplicate

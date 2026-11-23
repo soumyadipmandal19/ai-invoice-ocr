@@ -98,11 +98,11 @@ Keep that guard and owner-lock ordering aligned with bill saves/account deletion
 
 
 Financial organization quality checks:
-- `lib/financial-organization.ts` creates bounded version 3 input batches. Inferred
+- `lib/financial/organization.ts` creates bounded version 3 input batches. Inferred
   fields absent from the raw text are excluded. SKU/category continuation lines
   are linked to their product anchor and kept in the same batch. Cached version 1/2
   plans retain their previous input layouts when an Inngest run retries.
-- `lib/financial-validation.ts` rejects order-number/payment-method label confusion,
+- `lib/financial/validation.ts` rejects order-number/payment-method label confusion,
   recovers unique explicit document/order/shipping identifiers, and flags arithmetic
   discrepancies without changing printed amounts. It leaves conflicting identifiers
   blank. Arithmetic checks skip ambiguous numeric formats and adjusted item rows.

@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import ProcessingLoader from "@/components/processing-loader";
-import SessionWorkbook from "@/components/session-workbook";
+import SessionWorkbook, { type SessionWorkbookHandle } from "@/components/session-workbook";
 import WorkspaceRecordReview from "@/components/workspace-record-review";
 import type { WorkspaceRecord } from "@/types/workspace/record";
-import type { FinancialWorkbook } from "@/lib/financial-workbook";
+import type { FinancialWorkbook } from "@/lib/financial/workbook";
 import type { SavedBillPage } from "@/types/bills/responses";
-import { mergeSavedBills, removeWorkspaceRecord } from "@/lib/bills/history";
+import { mergeSavedBills, mergeDuplicateUpload, removeWorkspaceRecord } from "@/lib/bills/history";
+import type { DuplicateUpload } from "@/types/extraction/upload";
 import FilePreview from "@/components/file-preview";
 import { isExtractionResult, MAX_UPLOAD_BYTES, SUPPORTED_FILE_EXTENSIONS, type ExtractionResult } from "@/types/extraction/result";
 
@@ -22,12 +23,16 @@ export default function PdfUpload({ inputRef, onStateChange }: {
   onStateChange?: (state: WorkspaceSnapshot) => void;
 }) {
   const preview = useRef<HTMLDialogElement>(null);
+  const workbook = useRef<SessionWorkbookHandle>(null);
+  const workbookPanel = useRef<HTMLDivElement>(null);
+  const results = useRef<HTMLElement>(null);
   const fallbackInput = useRef<HTMLInputElement>(null);
   const input = inputRef || fallbackInput;
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);
   const [historyPage, setHistoryPage] = useState({ offset: 0, version: 0 });
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -39,6 +44,9 @@ export default function PdfUpload({ inputRef, onStateChange }: {
   const tabsId = useId();
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const activeDocument = records.find((record) => record.id === activeRecord);
+  const readyCount = records.filter((record) => record.workbook).length;
+  const processingCount = records.filter((record) => record.status === "extracting" || record.status === "checking").length;
+  const visibleRecords = records;
   const extracting = useRef(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const patchRecord = useCallback((id: string, patch: Partial<WorkspaceRecord>) => {
@@ -47,6 +55,18 @@ export default function PdfUpload({ inputRef, onStateChange }: {
   const changeWorkbook = useCallback((id: string, workbook: FinancialWorkbook) => patchRecord(id, { workbook }), [patchRecord]);
   function chooseAnother() {
     input.current?.click();
+  }
+
+  function reviewWorkbook() {
+    setActiveRecord("workbook");
+    workbook.current?.openReview();
+    requestAnimationFrame(() => {
+      workbookPanel.current?.focus({ preventScroll: true });
+      results.current?.scrollIntoView({
+        block: "nearest",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+      });
+    });
   }
 
   function removeRecord(id: string) {
@@ -91,11 +111,11 @@ export default function PdfUpload({ inputRef, onStateChange }: {
   }, [historyPage]);
 
   function navigateDocuments(event: KeyboardEvent<HTMLButtonElement>) {
-    const ids = ["workbook", ...records.map((record) => record.id)];
-    const current = ids.indexOf(activeRecord);
+    const ids = ["workbook", ...visibleRecords.map((record) => record.id)];
+    const current = Math.max(0, ids.findIndex((id) => event.currentTarget === tabRefs.current.get(id)));
     let next = current;
-    if (event.key === "ArrowRight") next = (current + 1) % ids.length;
-    else if (event.key === "ArrowLeft") next = (current - 1 + ids.length) % ids.length;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") next = (current + 1) % ids.length;
+    else if (event.key === "ArrowUp" || event.key === "ArrowLeft") next = (current - 1 + ids.length) % ids.length;
     else if (event.key === "Home") next = 0;
     else if (event.key === "End") next = ids.length - 1;
     else return;
@@ -122,6 +142,7 @@ export default function PdfUpload({ inputRef, onStateChange }: {
   function selectFile(selected: File | undefined) {
     if (busy || !selected) return;
     setError("");
+    setNotice("");
     const extension = selected.name.split(".").pop()?.toLowerCase() || "";
     if (!SUPPORTED_FILE_EXTENSIONS.includes(extension)) {
       setFile(null);
@@ -146,16 +167,26 @@ export default function PdfUpload({ inputRef, onStateChange }: {
     extracting.current = true;
     const id = crypto.randomUUID();
     const addedAt = new Date().toISOString();
-    setRecords((current) => [...current, { id, index: current.length + 1, fileName: file.name, addedAt, status: "extracting", result: null, workbook: null, job: null, error: "" }]);
+    const attempt: WorkspaceRecord = { id, index: records.length + 1, fileName: file.name, addedAt, status: "extracting", result: null, workbook: null, job: null, error: "" };
+    setRecords((current) => [...current, { ...attempt, index: current.length + 1 }]);
     setActiveRecord(id);
     setPending(true);
     setError("");
+    setNotice("");
     onStateChange?.({ status: "processing", fileName: file.name, result: null });
     const form = new FormData();
     form.set("file", file);
     try {
       const response = await fetch("/api/extract", { method: "POST", body: form });
       const data: unknown = await response.json();
+      if (response.status === 409 && typeof data === "object" && data !== null && "duplicate" in data && data.duplicate === true && "jobId" in data && typeof data.jobId === "string") {
+        const duplicate = data as DuplicateUpload;
+        setRecords((current) => mergeDuplicateUpload(current, id, duplicate).records);
+        setActiveRecord(mergeDuplicateUpload([...records, attempt], id, duplicate).activeId);
+        setNotice(duplicate.message);
+        onStateChange?.({ status: duplicate.bill ? "complete" : "checking", fileName: file.name, result: duplicate.bill?.ocr || duplicate.document || null });
+        return;
+      }
       if (!response.ok) {
         const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
           ? data.error : "Extraction failed. Please try again.";
@@ -177,35 +208,37 @@ export default function PdfUpload({ inputRef, onStateChange }: {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-      <section id="document-upload" aria-labelledby="upload-heading" className={`shrink-0 scroll-mt-24 rounded-xl border p-3 transition-colors ${dragging ? "border-accent bg-accent-soft" : "border-line bg-panel"}`}
+      <section id="document-upload" aria-label="Upload, extract, and review" className="grid shrink-0 gap-3 sm:grid-cols-3 lg:grid-cols-[1.2fr_1fr_1fr]"
         onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
         onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
         onDrop={(event) => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files[0]); }}>
         <input ref={input} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,application/pdf,image/png,image/jpeg,image/webp,image/bmp" disabled={busy} className="sr-only" aria-label="Choose PDF or image"
           onChange={(event) => { selectFile(event.target.files?.[0]); event.target.value = ""; }} />
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-          <button type="button" disabled={busy} onClick={chooseAnother} aria-label={file ? `Replace ${file.name}` : "Choose a PDF or image"} className="group flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left outline-offset-4 transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60">
-            <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-background text-accent transition-colors group-hover:border-accent/40"><svg className="size-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0L7 9m5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></svg></span>
-            <span className="min-w-0 flex-1">
-              <span id="upload-heading" title={file?.name} className="block truncate text-xs font-medium text-foreground">{file ? file.name : dragging ? "Drop your document here" : "Choose a document"}</span>
-              <span className="mt-0.5 block text-[11px] text-muted">{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · ${pending ? "Extracting…" : "Click to replace"}` : "or drag it here · PDF or image · Max 10 MB"}</span>
-            </span>
-          </button>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-            <a href="/templates/bills-template.xlsx" download title="Download the Excel bill tracker template" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-medium text-muted transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent">
-              <svg aria-hidden="true" className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 3h16v18H4zM4 9h16M10 9v12M4 15h16" /></svg>Excel template
-            </a>
-            {file && previewUrl && <button type="button" onClick={() => preview.current?.showModal()} aria-haspopup="dialog" aria-controls={`${tabsId}-preview`} className="inline-flex min-h-9 items-center rounded-lg border border-line-strong px-3 text-xs font-medium text-body hover:bg-surface focus-visible:outline-2 focus-visible:outline-accent">Preview</button>}
-            <button type="button" onClick={extract} disabled={!file || busy} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-3.5 text-xs font-semibold text-ink transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-line-strong disabled:bg-surface disabled:text-subtle">
-              {pending ? <span aria-hidden="true" className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <svg aria-hidden="true" className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-5-5 5 5-5 5" /></svg>}{pending ? "Extracting…" : "Extract text"}
+        <article aria-labelledby="upload-heading" className={`workflow-card min-w-0 ${dragging ? "border-accent bg-accent-soft" : "border-line bg-panel"}`}>
+          <div className="flex items-center gap-2.5"><span className="workflow-icon text-accent"><svg aria-hidden="true" className="size-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0L7 9m5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></svg></span><h2 id="upload-heading" className="text-sm font-semibold">Upload</h2><span className="ml-auto text-xs text-subtle">Max 10 MB</span></div>
+          <div className="mt-3 flex min-w-0 items-center gap-2">
+            <button type="button" disabled={busy} onClick={chooseAnother} aria-label={file ? `Replace ${file.name}` : "Choose a PDF or image"} className={`flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg border border-dashed px-3 py-2 text-left transition-colors hover:border-accent/60 hover:bg-accent-soft disabled:cursor-wait disabled:opacity-50 ${dragging ? "border-accent" : "border-line-strong"}`}>
+              <span className="min-w-0 flex-1"><span title={file?.name} className="block truncate text-sm font-medium text-body">{file ? file.name : dragging ? "Drop your document here" : "Choose a document"}</span><span className="mt-0.5 block text-xs text-subtle">{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · Click to replace` : "or drag a PDF or image here"}</span></span>
+              <span aria-hidden="true" className="shrink-0 text-lg text-accent">{file ? "✓" : "+"}</span>
+            </button>
+            {file && previewUrl && <button type="button" onClick={() => preview.current?.showModal()} aria-haspopup="dialog" aria-controls={`${tabsId}-preview`} className="min-h-9 shrink-0 rounded-lg border border-line-strong px-2.5 text-sm text-body hover:bg-surface">Preview</button>}
+          </div>
+        </article>
+        <article aria-labelledby="extract-heading" className={`workflow-card min-w-0 ${processingCount ? "border-accent/40 bg-panel" : "border-line bg-panel"}`}>
+          <div className="flex items-center gap-2.5"><span className={`workflow-icon ${processingCount ? "text-accent" : "text-muted"}`}><svg aria-hidden="true" className="size-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z" /></svg></span><h2 id="extract-heading" className="text-sm font-semibold">Extract</h2><span role="status" className={`ml-auto text-xs ${processingCount ? "text-accent" : "text-subtle"}`}>{pending ? "Extracting…" : processingCount ? "Organizing…" : file ? "File ready" : "Waiting for a file"}</span></div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="max-w-48 text-[13px] leading-5 text-muted">{processingCount ? "Reading and organizing your document." : "Turn your document into editable tables."}</p>
+            <button type="button" onClick={extract} disabled={!file || busy} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-3 text-sm font-semibold text-ink transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:border-line-strong disabled:bg-surface disabled:text-subtle">
+              {pending && <span aria-hidden="true" className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />}{pending ? "Extracting…" : "Extract text"}
             </button>
           </div>
-        </div>
-        <div aria-live="polite" className="text-xs">
-          {pending && <p className="mt-2 text-muted">Processing your document. Please keep this page open.</p>}
-          {error && <p role="alert" className="mt-2 rounded-lg bg-surface p-2 text-foreground">{error}</p>}
-        </div>
+        </article>
+        <article aria-labelledby="review-heading" className={`workflow-card min-w-0 ${readyCount ? "border-accent/25 bg-accent-soft/40" : "border-line bg-panel"}`}>
+          <div className="flex items-center gap-2.5"><span className={`workflow-icon ${readyCount ? "text-accent" : "text-muted"}`}><svg aria-hidden="true" className="size-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 3h16v18H4zM4 9h16M10 9v12M4 15h16m9-3 1.5 1.5L18 11" /></svg></span><h2 id="review-heading" className="text-sm font-semibold">Review</h2><span className="ml-auto text-xs text-subtle">{readyCount ? `${readyCount} ready` : "Your workbook"}</span></div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="max-w-48 text-[13px] leading-5 text-muted">{readyCount ? "Check your data, make edits, and export." : "Your organized documents will appear below."}</p><button type="button" disabled={!readyCount} onClick={reviewWorkbook} aria-controls={`${tabsId}-panel-workbook`} className="min-h-9 shrink-0 rounded-lg border border-line-strong bg-panel px-3 text-sm font-medium text-body hover:border-accent/40 hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40">View workbook</button></div>
+        </article>
       </section>
+      {(notice || error) && <div aria-live="polite" className="shrink-0 text-sm">{notice && <p role="status" className="rounded-lg border border-accent/20 bg-accent-soft px-3 py-2 text-body">{notice}</p>}{error && <p role="alert" className="rounded-lg border border-red-400/25 bg-red-400/10 px-3 py-2 text-red-200">{error}</p>}</div>}
       <dialog ref={preview} id={`${tabsId}-preview`} aria-labelledby={`${tabsId}-preview-title`} className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-2xl overflow-auto rounded-2xl border border-line-strong bg-panel text-foreground shadow-2xl backdrop:bg-black/75">
         <div className="flex items-center justify-between gap-3 border-b border-line p-3">
           <h2 id={`${tabsId}-preview-title`} className="min-w-0 truncate text-xs font-medium">{file?.name}</h2>
@@ -214,29 +247,42 @@ export default function PdfUpload({ inputRef, onStateChange }: {
         {file && previewUrl && <FilePreview key={previewUrl} file={file} url={previewUrl} />}
       </dialog>
 
-      <section id="document-results" aria-label="Extraction results" aria-busy={busy} className="flex min-h-0 min-w-0 flex-1 flex-col scroll-mt-24 overflow-hidden rounded-2xl border border-line bg-panel shadow-sm">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2">
-          <h2 className="text-xs font-semibold text-foreground">Document workbook <span className="ml-2 font-normal text-muted">{records.length} {records.length === 1 ? "document" : "documents"}</span></h2>
+      <section ref={results} id="document-results" aria-label="Extraction results" aria-busy={busy} className="flex min-h-[520px] min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-line bg-panel sm:min-h-[400px] lg:min-h-0">
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-3 py-2.5 sm:px-4">
+          <h2 className="mr-auto flex items-center gap-2 text-sm font-semibold">Bills workspace <span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs font-normal tabular-nums text-muted">{records.length}</span></h2>
           {historyLoading ? <p role="status" className="text-xs text-muted">Loading saved documents…</p> : historyError ? <div role="alert" className="flex flex-wrap items-center gap-2 text-xs"><p className="text-red-300">{historyError}</p><button type="button" onClick={() => requestHistoryPage(historyPage.offset)} className="result-button">Retry</button></div> : nextHistoryOffset !== null ? <button type="button" onClick={() => requestHistoryPage(nextHistoryOffset)} className="result-button">Load more documents</button> : null}
+
         </div>
-        <div role="tablist" aria-label="Documents" className="flex shrink-0 overflow-x-auto border-b border-line bg-background">
-          {[{ id: "workbook", label: "All documents", detail: "Combined workbook" }, ...records.map((record) => ({
-            id: record.id, label: `#${record.index} · ${record.fileName}`,
-            detail: { extracting: "Extracting…", checking: "Organizing…", ready: "Ready to review", unsupported: "Unsupported document", failed: "Processing failed" }[record.status],
-          }))].map((tab) => <button key={tab.id} ref={(element) => { if (element) tabRefs.current.set(tab.id, element); else tabRefs.current.delete(tab.id); }}
-            id={`${tabsId}-tab-${tab.id}`} type="button" role="tab" aria-selected={activeRecord === tab.id} aria-controls={`${tabsId}-panel-${tab.id}`} tabIndex={activeRecord === tab.id ? 0 : -1}
-            onClick={() => setActiveRecord(tab.id)} onKeyDown={navigateDocuments} title={tab.label}
-            className={`min-w-40 max-w-64 shrink-0 border-b-2 px-4 py-2 text-left outline-offset-[-4px] transition-colors ${activeRecord === tab.id ? "border-accent bg-accent-soft text-accent" : "border-transparent text-muted hover:bg-surface hover:text-foreground"}`}>
-            <span className="block truncate text-xs font-medium">{tab.label}</span><span className="sr-only">{tab.detail}</span>
-          </button>)}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div role="tablist" aria-label="Documents" aria-orientation="horizontal" className="flex min-w-0 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-line bg-background/50 px-3 py-2">
+              <button ref={(element) => { if (element) tabRefs.current.set("workbook", element); else tabRefs.current.delete("workbook"); }}
+                id={`${tabsId}-tab-workbook`} type="button" role="tab" aria-selected={activeRecord === "workbook"} aria-controls={`${tabsId}-panel-workbook`} tabIndex={activeRecord === "workbook" || !visibleRecords.some((record) => record.id === activeRecord) ? 0 : -1}
+                onClick={() => setActiveRecord("workbook")} onKeyDown={navigateDocuments}
+                className={`flex min-h-9 shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-sm font-medium focus-visible:outline-2 focus-visible:outline-accent ${activeRecord === "workbook" ? "border-accent/25 bg-accent-soft text-accent" : "border-transparent text-muted hover:bg-surface"}`}>
+                <svg aria-hidden="true" className="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z" /></svg>
+                <span>All bills</span><span className="text-xs tabular-nums opacity-60">{records.length}</span>
+              </button>
+              {visibleRecords.map((record) => <button key={record.id}
+                ref={(element) => { if (element) tabRefs.current.set(record.id, element); else tabRefs.current.delete(record.id); }}
+                id={`${tabsId}-tab-${record.id}`} type="button" role="tab" aria-selected={activeRecord === record.id} aria-controls={`${tabsId}-panel-${record.id}`} tabIndex={activeRecord === record.id ? 0 : -1}
+                onClick={() => setActiveRecord(record.id)} onKeyDown={navigateDocuments} title={`${record.fileName} · ${{ extracting: "Extracting", checking: "Organizing", ready: "Ready to review", unsupported: "Unsupported document", failed: "Processing failed" }[record.status]}`}
+                className={`flex min-h-9 max-w-60 shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-sm focus-visible:outline-2 focus-visible:outline-accent ${activeRecord === record.id ? "border-accent/25 bg-accent-soft text-accent" : "border-transparent text-muted hover:bg-surface"}`}>
+                <svg aria-hidden="true" className="size-4 shrink-0 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 3H5v18h14V8l-5-5ZM14 3v5h5M8 12h8M8 16h6" /></svg>
+                <span className="truncate">{record.fileName}</span>
+                <span role="img" aria-label={{ extracting: "Extracting", checking: "Organizing", ready: "Ready to review", unsupported: "Unsupported document", failed: "Processing failed" }[record.status]} className={`size-1.5 shrink-0 rounded-full ${record.status === "ready" ? "bg-accent" : record.status === "failed" ? "bg-red-300" : record.status === "extracting" || record.status === "checking" ? "animate-pulse bg-amber-300" : "bg-subtle"}`} />
+              </button>)}
+              {!records.length ? <p className="shrink-0 px-2 text-sm text-subtle">Add your first document above.</p> : !visibleRecords.length ? <p role="status" className="shrink-0 px-2 text-sm text-muted">No matching documents.</p> : null}
+            </div>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div ref={workbookPanel} id={`${tabsId}-panel-workbook`} role="tabpanel" aria-labelledby={`${tabsId}-tab-workbook`} tabIndex={0} hidden={activeRecord !== "workbook"} className={activeRecord === "workbook" ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "hidden"}>
+              <SessionWorkbook ref={workbook} records={records} onReview={setActiveRecord} onWorkbookChange={changeWorkbook} onDeleted={removeRecord} deleteDisabled={historyLoading} />
+            </div>
+            {records.map((record) => <div key={record.id} id={`${tabsId}-panel-${record.id}`} role="tabpanel" aria-label={record.fileName} tabIndex={0} hidden={activeRecord !== record.id} className={activeRecord === record.id ? "flex min-h-0 flex-1 flex-col overflow-auto" : "hidden"}>
+              {record.result || record.workbook || record.restored ? <WorkspaceRecordReview record={record} onPatch={patchRecord} onChooseAnother={chooseAnother} /> : record.status === "failed" ? <div className="flex min-h-96 flex-col items-center justify-center px-6 py-12 text-center"><h3 className="text-lg font-semibold text-foreground">Couldn’t extract this document</h3><p className="mt-3 max-w-md break-words text-sm leading-6 text-muted">{record.error}</p><button type="button" onClick={chooseAnother} className="result-button mt-5">Choose another document</button></div> : <ProcessingLoader stage="extracting" />}
+            </div>)}
+          </div>
         </div>
-        <div id={`${tabsId}-panel-workbook`} role="tabpanel" aria-labelledby={`${tabsId}-tab-workbook`} tabIndex={0} hidden={activeRecord !== "workbook"} className={activeRecord === "workbook" ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "hidden"}>
-          <SessionWorkbook records={records} onReview={setActiveRecord} onWorkbookChange={changeWorkbook} onDeleted={removeRecord} deleteDisabled={historyLoading} />
-        </div>
-        {records.map((record) => <div key={record.id} id={`${tabsId}-panel-${record.id}`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${record.id}`} tabIndex={0} hidden={activeRecord !== record.id} className={activeRecord === record.id ? "flex min-h-0 flex-1 flex-col overflow-auto" : "hidden"}>
-          {record.result || record.workbook || record.restored ? <WorkspaceRecordReview record={record} onPatch={patchRecord} onChooseAnother={chooseAnother} /> : record.status === "failed" ? <div className="flex min-h-96 flex-col items-center justify-center px-6 py-12 text-center"><h3 className="text-lg font-semibold text-foreground">Couldn’t extract this document</h3><p className="mt-3 max-w-md break-words text-sm leading-6 text-muted">{record.error}</p><button type="button" onClick={chooseAnother} className="result-button mt-5">Choose another document</button></div> : <ProcessingLoader stage="extracting" />}
-        </div>)}
-        {activeDocument && <p className="shrink-0 border-t border-line bg-panel px-4 py-1.5 text-xs leading-5 text-muted">Showing only <span className="break-all font-medium text-foreground">#{activeDocument.index} · {activeDocument.fileName}</span>. Select All documents for the combined workbook.</p>}
+        {activeDocument && <p className="shrink-0 border-t border-line bg-panel px-4 py-1.5 text-xs leading-5 text-muted">Showing only <span className="break-all font-medium text-foreground">{activeDocument.fileName}</span>. Select All bills for the combined workbook.</p>}
       </section>
     </div>
   );

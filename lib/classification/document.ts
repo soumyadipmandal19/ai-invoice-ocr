@@ -1,5 +1,5 @@
 import type { ExtractedPage } from "@/types/extraction/result";
-import type { FinancialWorkbook } from "@/lib/financial-workbook";
+import type { FinancialWorkbook } from "@/lib/financial/workbook";
 
 // A byte cap also bounds token use for non-English text; this is not a token estimate.
 export const MAX_CLASSIFICATION_BYTES = 2_400;
@@ -28,6 +28,7 @@ export type ClassificationJob = {
   workbook?: FinancialWorkbook;
   error?: string;
   ownerUserId?: string;
+  uploadKey?: string;
   persistence?: { status: "pending" | "saved" | "failed"; billId?: string };
 };
 

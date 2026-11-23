@@ -25,7 +25,7 @@ export async function saveOrganizedBill(jobId: string, ownerUserId: string) {
   const { bill, items } = normalizeBill(job.id, ownerUserId, job.workbook, job.result);
   const artifacts = await readClassificationArtifacts(job.id);
   if (!artifacts) throw new BillSaveError("The original OCR and AI snapshots are unavailable for this older result. Upload the document again.", 409);
-  const saved = await storeBill(bill, items, artifacts);
+  const saved = await storeBill(bill, items, artifacts, job.uploadKey);
   // Complete the local job only after the graph transaction commits successfully.
   await completeClassificationJob(job.id, job.result, job.workbook, saved.billId);
   return saved;

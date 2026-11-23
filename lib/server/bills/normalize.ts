@@ -1,8 +1,9 @@
 import "server-only";
 
-import type { Classification } from "@/lib/classification";
-import type { FinancialWorkbook } from "@/lib/financial-workbook";
+import type { Classification } from "@/lib/classification/document";
+import type { FinancialWorkbook } from "@/lib/financial/workbook";
 import type { BillNode, BillItemNode } from "@/lib/server/database/schema";
+import { currencyCode } from "@/lib/financial/currency";
 
 /** Retain all original mapped values, including numbers/dates we cannot normalize safely. */
 export function normalizeBill(jobId: string, ownerUserId: string, workbook: FinancialWorkbook, classification: Classification) {
@@ -31,7 +32,7 @@ export function normalizeBill(jobId: string, ownerUserId: string, workbook: Fina
   const billDate = parsedDate && !Number.isNaN(parsedDate.getTime()) && parsedDate.toISOString().slice(0, 10) === rawDate ? rawDate : null;
   if (rawDate && !billDate) warnings.push("Bill date: original date needs review; no date order was guessed.");
   const rawCurrency = values.currency?.trim().toUpperCase();
-  const currency = rawCurrency && /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : null;
+  const currency = currencyCode(values.currency);
   if (rawCurrency && !currency) warnings.push("Currency: original value needs a three-letter code.");
   const now = new Date().toISOString();
   const bill: BillNode = {
@@ -49,7 +50,7 @@ export function normalizeBill(jobId: string, ownerUserId: string, workbook: Fina
     const item = fields(products.columns, row);
     const label = `Item ${index + 1}`;
     const itemCurrency = item.currency?.trim().toUpperCase();
-    const normalizedCurrency = itemCurrency ? /^[A-Z]{3}$/.test(itemCurrency) ? itemCurrency : null : currency;
+    const normalizedCurrency = itemCurrency ? currencyCode(item.currency) : currency;
     if (itemCurrency && normalizedCurrency !== currency) warnings.push(`${label}: currency differs from the bill or needs review; original value retained.`);
     const page = number(item.source_page, `${label} page`);
     if (page !== null && (!Number.isInteger(page) || page < 1)) warnings.push(`${label}: original source page needs review.`);

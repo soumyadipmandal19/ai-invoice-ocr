@@ -1,8 +1,8 @@
 import "server-only";
 
 import { NonRetriableError, RetryAfterError } from "inngest";
-import { isDocumentType, MAX_CLASSIFICATION_BYTES, type Classification, type DocumentType } from "@/lib/classification";
-import { MAX_ORGANIZATION_CHUNK_BYTES, PRODUCT_MAPPING_FIELDS, RECEIPT_MAPPING_FIELDS, validateOrganizationResponse, type OrganizationChunkResult, type OrganizationSource } from "@/lib/financial-organization";
+import { isDocumentType, MAX_CLASSIFICATION_BYTES, type Classification, type DocumentType } from "@/lib/classification/document";
+import { MAX_ORGANIZATION_CHUNK_BYTES, PRODUCT_MAPPING_FIELDS, RECEIPT_MAPPING_FIELDS, validateOrganizationResponse, type OrganizationChunkResult, type OrganizationSource } from "@/lib/financial/organization";
 
 export function assertOpenRouterConfigured() {
   if (!process.env.OPENROUTER_API_KEY?.trim() || !process.env.OPENROUTER_MODEL?.trim()) {
@@ -81,7 +81,8 @@ export async function organizeFinancialChunk(sources: OrganizationSource[], docu
     'Return ONLY JSON: {"receipt":{"merchant_name":["copied value","source-id"]},"items":[{"source":"row-or-line-id","values":{"product_name":"copied name","line_total":"copied amount"}}]}.',
     `Allowed receipt keys: ${RECEIPT_MAPPING_FIELDS.join(",")}. Allowed item values keys: ${PRODUCT_MAPPING_FIELDS.join(",")}.`,
     "Raw line records are authoritative. Heuristic field records may be wrong; resolve conflicts using the original line labels and table columns.",
-    "document_number means this document's own invoice/receipt/bill number. For an invoice headed INVOICE followed by # 7694, copy 7694, not an Order ID. Map Order ID only to order_id. Ship Mode or Delivery Method belongs only to shipping_method; Same Day is never a payment method. Leave payment_method blank without payment evidence. A $ symbol alone does not establish USD.",
+    "document_number means this document's own invoice/receipt/bill number. For an invoice headed INVOICE followed by # 7694, copy 7694, not an Order ID. Map Order ID only to order_id. Ship Mode or Delivery Method belongs only to shipping_method; Same Day is never a payment method. Leave payment_method blank without payment evidence.",
+    "Recognize currency from monetary values as well as explicit currency labels and table headings, for every currency. Copy the printed code or symbol into currency and cite its source: $93.50 gives $, €80 gives €, ₹500 gives ₹, 250 USD gives USD. Prefer an explicit currency code when present. Preserve qualified symbols such as CA$ and HK$. A symbol alone may not identify a country: never expand $ to USD or ¥ to JPY without supporting evidence. Do not omit a visible currency indicator merely because its exact code is ambiguous. Leave genuinely conflicting currencies unresolved. Do not infer currency from a merchant address alone.",
     "A source with continuationOf belongs to that product anchor. Inspect it for product_code and category. Cite its ID explicitly with [value,source-id]; keep numeric item values on their own row. For example, a following line 'Copiers, Technology, TEC-CO-3688' supplies product_code TEC-CO-3688 and category Copiers, Technology.",
     "Copy values exactly from this batch. Receipt fields use [value,source-id]. Item strings cite the item's source automatically; use [value,other-source-id] only for additional evidence from a linked continuationOf record. Omit absent/ambiguous keys. Preserve numeric formats, codes and dates. Never calculate amounts or guess quantities, currency, category or merchant.",
     "Use semantic meaning and table column labels: quantity is not unit_price; line_total is not unit_price; tax_rate and discount_rate are percentages, tax and discount are amounts. Separate products from receipt totals, payment lines and table headings. Never turn a summary total into a product.",

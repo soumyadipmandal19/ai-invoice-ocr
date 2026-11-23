@@ -1,5 +1,5 @@
-import type { Classification } from "@/lib/classification";
-import type { FinancialWorkbook } from "@/lib/financial-workbook";
+import type { Classification } from "@/lib/classification/document";
+import type { FinancialWorkbook } from "@/lib/financial/workbook";
 import type { ExtractionResult } from "@/types/extraction/result";
 
 export type SavedBill = {

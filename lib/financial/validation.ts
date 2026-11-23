@@ -1,4 +1,4 @@
-import type { OrganizationSource } from "@/lib/financial-organization";
+import type { OrganizationSource } from "@/lib/financial/organization";
 
 const ORDER_LABEL = /\border\s*(?:id|number|no\.?)\s*[:=#]/i;
 const SHIPPING_LABEL = /\b(?:ship(?:ping)?|delivery)\s*(?:mode|method)\s*[:=]/i;

@@ -108,11 +108,14 @@ export async function deleteAccount(token: string | undefined): Promise<boolean>
        collect(DISTINCT ocr) AS ocrSnapshots, collect(DISTINCT llm) AS llmSnapshots
      OPTIONAL MATCH (s:Session)-[:BELONGS_TO]->(u)
      WITH u, bills, items, ocrSnapshots, llmSnapshots, collect(DISTINCT s) AS sessions
+     OPTIONAL MATCH (u)-[:HAS_UPLOAD]->(upload:DocumentUpload)
+     WITH u, bills, items, ocrSnapshots, llmSnapshots, sessions, collect(DISTINCT upload) AS uploads
      FOREACH (item IN items | DETACH DELETE item)
      FOREACH (bill IN bills | DETACH DELETE bill)
      FOREACH (snapshot IN ocrSnapshots | DETACH DELETE snapshot)
      FOREACH (snapshot IN llmSnapshots | DETACH DELETE snapshot)
      FOREACH (session IN sessions | DETACH DELETE session)
+     FOREACH (upload IN uploads | DETACH DELETE upload)
      DETACH DELETE u
      RETURN true AS deleted`,
     { tokenHash: digest(token), now: Date.now() }, configuration(),

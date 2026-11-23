@@ -1,4 +1,4 @@
-import { financialArithmeticWarnings, matchesReceiptMeaning, reconcileReceiptIdentifiers } from "@/lib/financial-validation";
+import { financialArithmeticWarnings, matchesReceiptMeaning, reconcileReceiptIdentifiers } from "@/lib/financial/validation";
 import type { ExtractionResult } from "@/types/extraction/result";
 
 export const MAX_ORGANIZATION_CHUNK_BYTES = 5_000;
@@ -26,78 +26,99 @@ export function compactOcrText(value: string) {
 // Keep fields/table rows compact and avoid sending their duplicate OCR lines.
 export function prepareOrganizationInput(document: ExtractionResult, options?: { legacyRecordLimit?: 20; layoutVersion?: 2 | 3 }): OrganizationSource[][] {
   const modern = !options?.legacyRecordLimit && options?.layoutVersion !== 2;
-  const records: OrganizationSource[] = [];
+  const pageTextByNumber = new Map<number, string>();
+  const pagesByNumber = new Map(modern && document.structured.fields.length
+    ? document.pages.map((page) => [page.page, page] as const) : []);
   const represented = new Map<number, Set<string>>();
   const remember = (page: number, value: string) => {
     if (!represented.has(page)) represented.set(page, new Set());
     represented.get(page)!.add(compactOcrText(value));
   };
-  for (const [index, field] of document.structured.fields.entries()) {
-    const text = compactOcrText(`${field.label}: ${field.value}`);
-    // Reject inferred label/value pairs that do not actually occur in the raw text.
-    if (modern && !document.pages.some((page) => page.page === field.page && compactOcrText(page.text).includes(text))) continue;
-    records.push({ id: `f${index + 1}`, page: field.page, kind: "field", text });
-    if (!modern) {
-      remember(field.page, field.sourceText);
-      remember(field.page, text);
+  // Yield records in the existing order so cached plans retain their boundaries.
+  function* sources(): Generator<OrganizationSource> {
+    for (const [index, field] of document.structured.fields.entries()) {
+      const text = compactOcrText(`${field.label}: ${field.value}`);
+      // Reject inferred label/value pairs that do not actually occur in the raw text.
+      if (modern) {
+        if (!pageTextByNumber.has(field.page)) {
+          const page = pagesByNumber.get(field.page);
+          if (!page) continue;
+          pageTextByNumber.set(field.page, compactOcrText(page.text));
+        }
+        if (!pageTextByNumber.get(field.page)!.includes(text)) continue;
+      }
+      yield { id: `f${index + 1}`, page: field.page, kind: "field", text };
+      if (!modern) {
+        remember(field.page, field.sourceText);
+        remember(field.page, text);
+      }
     }
-  }
-  for (const [index, table] of document.structured.tables.entries()) {
-    for (const column of table.columns) remember(table.page, column);
-    remember(table.page, table.columns.join(" "));
-    for (const [rowIndex, row] of table.rows.entries()) {
-      for (const cell of row) remember(table.page, cell);
-      remember(table.page, row.join(" "));
-      records.push({
-        id: `t${index + 1}r${rowIndex + 1}`, page: table.page, kind: "table_row",
-        text: row.map((cell, column) => `${compactOcrText(table.columns[column] || `Column ${column + 1}`)}: ${compactOcrText(cell)}`).join(" | "),
-      });
+    for (const [index, table] of document.structured.tables.entries()) {
+      const columns = table.columns.map((column, index) => compactOcrText(column || `Column ${index + 1}`));
+      for (const column of table.columns) remember(table.page, column);
+      remember(table.page, table.columns.join(" "));
+      for (const [rowIndex, row] of table.rows.entries()) {
+        for (const cell of row) remember(table.page, cell);
+        remember(table.page, row.join(" "));
+        yield {
+          id: `t${index + 1}r${rowIndex + 1}`, page: table.page, kind: "table_row",
+          text: row.map((cell, column) => `${columns[column] ?? `Column ${column + 1}`}: ${compactOcrText(cell)}`).join(" | "),
+        };
+      }
     }
-  }
-  for (const page of document.pages) {
-    let previous: OrganizationSource | undefined;
-    for (const [index, line] of page.text.split(/\r?\n/).entries()) {
-      const text = compactOcrText(line);
-      if (!text || represented.get(page.page)?.has(text)) continue;
-      const source: OrganizationSource = { id: `p${page.page}l${index + 1}`, page: page.page, kind: "line", text, ...(modern ? { line: index + 1 } : {}) };
-      // Keep an unlabelled SKU/category continuation with its preceding priced row.
-      // Explicit links prevent borrowing another product's values from the same page.
-      if (modern && previous && index + 1 - previous.line! <= 3
-        && /(?:[$€£₹฿]\s*\d|\d[.,]\d{2}\b)/.test(previous.text)
-        && !/^(?:sub\s*total|total|tax|discount|shipping|balance|paid)\b/i.test(previous.text)
-        && /,|\b[A-Z]{2,}-[A-Z0-9-]*\d/i.test(text)
-        && !/[:=]|[$€£₹฿]|\d[.,]\d{2}\b/.test(text)) source.continuationOf = previous.id;
-      records.push(source);
-      previous = source;
+    for (const page of document.pages) {
+      let previous: OrganizationSource | undefined;
+      for (const [index, line] of page.text.split(/\r?\n/).entries()) {
+        const text = compactOcrText(line);
+        if (!text || represented.get(page.page)?.has(text)) continue;
+        const source: OrganizationSource = { id: `p${page.page}l${index + 1}`, page: page.page, kind: "line", text, ...(modern ? { line: index + 1 } : {}) };
+        // Keep an unlabelled SKU/category continuation with its preceding priced row.
+        // Explicit links prevent borrowing another product's values from the same page.
+        if (modern && previous && index + 1 - previous.line! <= 3
+          && /(?:[$€£₹฿]\s*\d|\d[.,]\d{2}\b)/.test(previous.text)
+          && !/^(?:sub\s*total|total|tax|discount|shipping|balance|paid)\b/i.test(previous.text)
+          && /,|\b[A-Z]{2,}-[A-Z0-9-]*\d/i.test(text)
+          && !/[:=]|[$€£₹฿]|\d[.,]\d{2}\b/.test(text)) source.continuationOf = previous.id;
+        yield source;
+        previous = source;
+      }
     }
   }
   const chunks: OrganizationSource[][] = [];
   let current: OrganizationSource[] = [];
+  let currentBytes = 2; // JSON array brackets.
   let totalBytes = 0;
-  const groups: OrganizationSource[][] = [];
-  for (const source of records) {
-    const previous = groups[groups.length - 1];
-    if (source.continuationOf && previous?.some((entry) => entry.id === source.continuationOf)) previous.push(source);
-    else groups.push([source]);
-  }
-  for (const group of groups) {
-    if (Buffer.byteLength(JSON.stringify(group), "utf8") > MAX_ORGANIZATION_CHUNK_BYTES) {
+  function packGroup(group: OrganizationSource[]) {
+    const groupBytes = Buffer.byteLength(JSON.stringify(group), "utf8");
+    if (groupBytes > MAX_ORGANIZATION_CHUNK_BYTES) {
       throw new Error("An OCR row is too large to organize within the model budget. Split the document or use a smaller receipt.");
     }
-    if (current.length && ((options?.legacyRecordLimit && current.length >= options.legacyRecordLimit) || Buffer.byteLength(JSON.stringify([...current, ...group]), "utf8") > MAX_ORGANIZATION_CHUNK_BYTES)) {
-      totalBytes += Buffer.byteLength(JSON.stringify(current), "utf8");
+    // Joining two nonempty JSON arrays replaces their adjacent brackets with a comma.
+    const candidateBytes = current.length ? currentBytes + groupBytes - 1 : groupBytes;
+    if (current.length && ((options?.legacyRecordLimit && current.length >= options.legacyRecordLimit) || candidateBytes > MAX_ORGANIZATION_CHUNK_BYTES)) {
+      totalBytes += currentBytes;
       chunks.push(current);
       current = [];
+      currentBytes = 2;
     }
+    currentBytes = current.length ? candidateBytes : groupBytes;
     current.push(...group);
+    if (totalBytes + currentBytes > MAX_ORGANIZATION_TOTAL_BYTES || chunks.length + 1 > MAX_ORGANIZATION_CHUNKS) {
+      throw new Error("This document exceeds the LLM organization budget. Split it into smaller receipts and try again.");
+    }
   }
-  if (current.length) {
-    totalBytes += Buffer.byteLength(JSON.stringify(current), "utf8");
-    chunks.push(current);
+  // Hold one group until its continuations are known, then pack it immediately.
+  let pending: OrganizationSource[] = [];
+  for (const source of sources()) {
+    if (source.continuationOf && pending.some((entry) => entry.id === source.continuationOf)) {
+      pending.push(source);
+    } else {
+      if (pending.length) packGroup(pending);
+      pending = [source];
+    }
   }
-  if (totalBytes > MAX_ORGANIZATION_TOTAL_BYTES || chunks.length > MAX_ORGANIZATION_CHUNKS) {
-    throw new Error("This document exceeds the LLM organization budget. Split it into smaller receipts and try again.");
-  }
+  if (pending.length) packGroup(pending);
+  if (current.length) chunks.push(current);
   return chunks;
 }
 

@@ -11,6 +11,7 @@ Extract text from PDFs and images, classify financial documents with AI, and rev
 - Use AI to classify documents and organize receipt details and line items.
 - Review extracted text, fields, and tables; copy text or download TXT, JSON, and financial CSV output.
 - Sign in to restore saved financial documents or delete them from your history.
+- Repeated uploads of the same file reuse your existing job or saved document.
 
 **Stack:** Next.js 16 · React 19 · TypeScript · Python · PyMuPDF · Tesseract · OpenRouter · Inngest · Neo4j.
 
@@ -123,7 +124,7 @@ Open [the app](http://localhost:3000). Inspect background runs in [Inngest](http
 
 1. Sign up or sign in, then upload a PDF or image.
 2. Review the extracted text while AI classification and financial mapping finish.
-3. Check receipt details, line items, and warnings; copy text or download the available output.
+3. Use the document tabs to open a file, or select All bills for the combined workbook. Bills combines upload status and bill details; Bill Items links purchases using Bill ID; Needs review shows outstanding checks. Search and filter by vendor, currency, bill date, or review status. Essential columns appear first; use Columns for additional fields. Open bill & source for original OCR and standard-form comparisons. Export Excel downloads Bills and Bill Items with all columns, matching IDs, current filters, and edits; CSV exports the visible table. Printed values remain text in Excel to preserve identifiers and number formats. Review notes use short checklists; complete validation messages remain in the selected bill’s review panel. Item notes contain item-specific checks instead of repeating all bill warnings. The default AI disclaimer is omitted from exported Notes; user notes are preserved.
 4. Return to saved financial documents through your history. Browser edits are not automatically saved; refreshing restores the original saved result.
 
 ## Limits and data handling

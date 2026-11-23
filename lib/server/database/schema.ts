@@ -53,6 +53,7 @@ export type LLMResultNode = {
 // Graph: (Session)-[:BELONGS_TO]->(User).
 // Keep database constraints and indexes here as the graph grows.
 const schemaStatements = [
+  "CREATE CONSTRAINT paper_upload_key IF NOT EXISTS FOR (u:DocumentUpload) REQUIRE u.uploadKey IS UNIQUE",
   "CREATE CONSTRAINT paper_user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
   "CREATE CONSTRAINT paper_user_email IF NOT EXISTS FOR (u:User) REQUIRE u.email IS UNIQUE",
   "CREATE CONSTRAINT paper_session_token IF NOT EXISTS FOR (s:Session) REQUIRE s.tokenHash IS UNIQUE",

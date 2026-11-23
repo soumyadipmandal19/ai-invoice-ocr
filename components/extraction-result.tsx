@@ -6,13 +6,13 @@ import ProcessingLoader from "@/components/processing-loader";
 import StructuredReview from "@/components/structured-review";
 import DocumentClassification from "@/components/document-classification";
 import FinancialWorkbookView from "@/components/financial-workbook";
-import type { ClassificationJob } from "@/lib/classification";
-import type { FinancialWorkbook } from "@/lib/financial-workbook";
+import type { ClassificationJob } from "@/lib/classification/document";
+import type { FinancialWorkbook } from "@/lib/financial/workbook";
 
 const labels = { text: "PDF text", ocr: "OCR", mixed: "Text + OCR", blank: "Blank page" };
 type View = "financial" | "structured" | "formatted" | "original" | "json";
 const VIEWS = [
-  { value: "financial", label: "Financial CSV", icon: "grid", title: "Financial document sheets", description: "Review organized document fields and item tables, then export each sheet as CSV." },
+  { value: "financial", label: "Bill data", icon: "grid", title: "Financial document sheets", description: "Review organized document fields and item tables, then export each sheet as CSV." },
   { value: "structured", label: "Fields & tables", icon: "fields", title: "Review fields & tables", description: "Check detected values and mark them reviewed." },
   { value: "formatted", label: "Readable text", icon: "text", title: "Document text", description: "Extracted text with headings, lists, and spacing." },
   { value: "original", label: "Original text", icon: "original", title: "Original extraction", description: "The original text returned by extraction." },

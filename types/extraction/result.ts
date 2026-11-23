@@ -1,4 +1,4 @@
-import type { ClassificationReference } from "@/lib/classification";
+import type { ClassificationReference } from "@/lib/classification/document";
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const MAX_PDF_BYTES = MAX_UPLOAD_BYTES;

@@ -79,7 +79,7 @@ export default function ProfileMenu({ user }: { user: AuthUser }) {
   return (
     <>
       <details ref={menu} className="relative">
-        <summary ref={trigger} aria-label={`Profile options for ${user.name}`} aria-controls="profile-options" title={user.name} className="flex size-10 cursor-pointer list-none items-center justify-center rounded-full border border-accent/30 bg-accent-soft text-sm font-semibold text-accent transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">{initial}</summary>
+        <summary ref={trigger} aria-label={`Profile options for ${user.name}`} aria-controls="profile-options" title={user.name} className="flex size-8 cursor-pointer list-none items-center justify-center rounded-full border border-accent/30 bg-accent-soft text-sm font-semibold text-accent transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">{initial}</summary>
         <div id="profile-options" className="absolute right-0 z-40 mt-3 w-52 rounded-xl border border-line-strong bg-panel p-1.5 shadow-2xl">
           <button type="button" onClick={() => openDialog("profile")} className="w-full rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-surface focus-visible:outline-2 focus-visible:outline-accent">Profile details</button>
           <button type="button" onClick={() => openDialog("delete")} className="w-full rounded-lg px-3 py-2.5 text-left text-sm text-red-300 hover:bg-red-400/10 focus-visible:outline-2 focus-visible:outline-red-300">Delete profile</button>

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ExtractionError, extractDocument } from "@/lib/server/extraction/extract-document";
 import { queueClassification } from "@/lib/server/classification/queue";
+import { claimUpload, releaseUpload, type UploadClaim } from "@/lib/server/uploads/store";
 import { MAX_UPLOAD_BYTES, SUPPORTED_FILE_EXTENSIONS } from "@/types/extraction/result";
 
 let activeJobs = 0;
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
   }
   activeJobs++;
   let directory: string | undefined;
+  let claim: UploadClaim | undefined;
   try {
     const form = await readForm(request);
     const file = form.get("file");
@@ -73,12 +75,20 @@ export async function POST(request: Request) {
     if (!detectedType || detectedType !== (extension === "jpeg" ? "jpg" : extension)) {
       throw new ExtractionError("The file content does not match its type. Choose a valid PDF or image.", 400);
     }
+    try {
+      const reservation = await claimUpload(content, user.id);
+      if ("duplicate" in reservation) return Response.json(reservation, { status: 409, headers: { "Cache-Control": "no-store" } });
+      claim = reservation;
+    } catch {
+      throw new ExtractionError("Unable to check for duplicate uploads. Check the database connection and try again.", 503);
+    }
     directory = await mkdtemp(path.join(tmpdir(), "ocr-upload-"));
     const filePath = path.join(directory, `document.${detectedType}`);
     await writeFile(filePath, content, { mode: 0o600 });
     const result = await extractDocument(filePath, form.get("forceOcr") === "true", request.signal);
     const document = { ...result, sourceFileName: file.name };
-    const classification = await queueClassification(document, user.id);
+    const classification = await queueClassification(document, user.id, claim);
+    if ("jobId" in classification) claim = undefined; // The job now owns the persistent reservation.
     return Response.json({ ...document, classification }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof ExtractionError) {
@@ -90,7 +100,13 @@ export async function POST(request: Request) {
     try {
       if (directory) await rm(directory, { recursive: true, force: true });
     } finally {
-      activeJobs--;
+      try {
+        if (claim) await releaseUpload(claim, user.id);
+      } catch {
+        console.error("Upload reservation cleanup failed.");
+      } finally {
+        activeJobs--;
+      }
     }
   }
 }

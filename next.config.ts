@@ -4,10 +4,17 @@ const nextConfig: NextConfig = {
   /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
+  // Python is provisioned separately on the host, not bundled as a JS asset.
+  outputFileTracingExcludes: {
+    "/*": ["./.venv/**/*"],
+  },
+  outputFileTracingIncludes: {
+    "/api/extract": ["./python/extract.py", "./python/ocr/**/*.py"],
+  },
   turbopack: {
     rules: {
       "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
+        loaders: [{ loader: "@tailwindcss/turbopack", options: { base: process.cwd() } }],
         as: "*.css",
       },
     },

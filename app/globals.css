@@ -1,26 +1,146 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+
+/* Scan UI source only; generated files and runtime data are not CSS inputs. */
+@source "./";
+@source "../components";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+  --background: #080a0b;
+  --foreground: #f5f6f6;
+  --panel: #101315;
+  --surface: #171b1e;
+  --raised: #22282c;
+  --body: #d4d9dc;
+  --muted: #a4adb3;
+  --subtle: #849098;
+  --line: #2b3338;
+  --line-soft: #20272b;
+  --line-strong: #3d494f;
+  --accent: #bdff54;
+  --accent-hover: #d1ff88;
+  --accent-text: #d4f7a5;
+  --accent-soft: #172015;
+  --accent-selected: #263b1b;
+  --ink: #0b1005;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-body: var(--body);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-selected: var(--accent-selected);
+  --color-ink: var(--ink);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--ink);
+}
+
+.app-shell {
+  background-image: radial-gradient(ellipse at 18% 0%, #bdff5409, transparent 42%);
+}
+
+button, a, input, select, textarea {
+  outline-offset: 4px;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+button:not(:disabled), select, summary {
+  cursor: pointer;
+}
+
+.neon-mark {
+  box-shadow: 0 0 22px #bdff5426;
+}
+
+.neon-button:not(:disabled) {
+  box-shadow: 0 0 20px #bdff5417;
+}
+
+.neon-button:not(:disabled):hover {
+  box-shadow: 0 0 28px #bdff542e;
+}
+
+.result-button {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 150ms, border-color 150ms, color 150ms;
+}
+
+.result-button:not(:disabled):hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A document surface distinct from the surrounding dark application controls. */
+.document-paper {
+  color-scheme: light;
+  --background: #f5f6f7;
+  --foreground: #111719;
+  --panel: #ffffff;
+  --surface: #edf0f2;
+  --body: #303a40;
+  --muted: #58646c;
+  --subtle: #65727a;
+  --line: #d5dde1;
+  --line-soft: #e6ebee;
+  --line-strong: #c3cdd3;
+  --accent: #446d0a;
+  --accent-soft: #eff5e5;
+}
+
+* {
+  scrollbar-color: var(--line-strong) var(--background);
+  scrollbar-width: thin;
+}
+
+@keyframes processing-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes processing-scan {
+  0%, 100% { transform: translateY(8px); opacity: 0; }
+  15%, 85% { opacity: 1; }
+  50% { transform: translateY(88px); }
+}
+
+.processing-orbit { animation: processing-orbit 3s linear infinite; }
+.processing-scan { animation: processing-scan 2.8s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

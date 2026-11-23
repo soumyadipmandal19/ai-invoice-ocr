@@ -3,13 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "setup:python": "python3 -m venv .venv && .venv/bin/python -m pip install -r python/requirements.txt",
+    "test:python": ".venv/bin/python -m unittest discover -s python/tests -v",
+    "test:classification": "node --test tests/classification.test.mjs",
+    "postinstall": "node scripts/build/copy-pdf-worker.mjs",
+    "predev": "node scripts/build/copy-pdf-worker.mjs",
+    "prebuild": "node scripts/build/copy-pdf-worker.mjs",
     "dev": "next dev",
+    "dev:inngest": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:neo4j": "node --env-file=.env.local scripts/database/check-neo4j.mjs",
+    "test:auth": "node --test tests/auth.test.mjs",
+    "test:workbook": "node --test tests/session-workbook.test.mjs",
+    "test:bills": "node --test tests/bills.test.mjs",
+    "test:history": "node --test tests/bill-history.test.mjs"
   },
   "dependencies": {
+    "inngest": "^4.26.2",
+    "neo4j-driver": "^6.3.2",
     "next": "16.4.6",
+    "pdfjs-dist": "^6.5.438",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

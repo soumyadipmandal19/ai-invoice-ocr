@@ -1,0 +1,5 @@
+# PDF text extraction, page rendering, and Tesseract-based OCR.
+# Pinned to the compatible prebuilt version verified with this project's Python.
+PyMuPDF==1.28.2
+# Raster image decoding and EXIF orientation for uploaded scans/photos.
+Pillow==13.0.0

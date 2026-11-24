@@ -64,13 +64,18 @@ export async function deleteOwnedBill(billId: string, ownerUserId: string): Prom
      OPTIONAL MATCH (b)-[:HAS_ITEM]->(item:BillItem)
      OPTIONAL MATCH (b)-[:HAS_OCR]->(ocr:OCRExtraction)
      OPTIONAL MATCH (b)-[:HAS_LLM_RESULT]->(llm:LLMResult)
+     OPTIONAL MATCH (b)-[:HAS_EMBEDDINGS]->(embeddings:DocumentEmbeddings)
+     OPTIONAL MATCH (b)-[:HAS_EMBEDDINGS|HAS_CHUNK*1..2]->(chunk:DocumentChunk)
      WITH u, b, uploads, collect(DISTINCT item) AS items, collect(DISTINCT ocr) AS ocrSnapshots,
-       collect(DISTINCT llm) AS llmSnapshots
+       collect(DISTINCT llm) AS llmSnapshots, collect(DISTINCT chunk) AS chunks,
+       collect(DISTINCT embeddings) AS embeddingGroups
      SET u.deletedBillIds = CASE WHEN $billId IN coalesce(u.deletedBillIds, [])
        THEN u.deletedBillIds ELSE coalesce(u.deletedBillIds, []) + [$billId] END
      FOREACH (child IN items | DETACH DELETE child)
      FOREACH (child IN ocrSnapshots | DETACH DELETE child)
      FOREACH (child IN llmSnapshots | DETACH DELETE child)
+     FOREACH (child IN chunks | DETACH DELETE child)
+     FOREACH (child IN embeddingGroups | DETACH DELETE child)
      FOREACH (upload IN uploads | DETACH DELETE upload)
      FOREACH (bill IN CASE WHEN b IS NULL THEN [] ELSE [b] END | DETACH DELETE bill)
      RETURN true AS deletedBill`,

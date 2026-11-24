@@ -1,6 +1,6 @@
 # Database and saved history
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
 Neo4j stores document ownership and related records as connected nodes:
 
@@ -11,6 +11,8 @@ graph LR
     B -->|HAS_ITEM| I[BillItem]
     B -->|HAS_OCR| O[OCRExtraction]
     B -->|HAS_LLM_RESULT| L[LLMResult]
+    B -->|HAS_EMBEDDINGS| E[DocumentEmbeddings]
+    E -->|HAS_CHUNK| C[DocumentChunk]
 ```
 
 | Node | Stored data |
@@ -21,6 +23,8 @@ graph LR
 | `BillItem` | A line item's product details, quantities, prices, tax, discounts, and its bill association. |
 | `OCRExtraction` | Original extraction JSON: page text, extraction methods, detected fields/tables, available bounding boxes, and warnings. |
 | `LLMResult` | Model identity, validated classification and mapping results, merged organization, and generated workbook JSON. |
+| `DocumentEmbeddings` | One grouping node per bill: model, dimensions, profile, processing status, chunk count, request tracking, fingerprint, and timestamps. |
+| `DocumentChunk` | A section of original OCR text, its page/position, text hash, bill/owner/group IDs, and the 768-number embedding vector. |
 
 The graph stores selected fields as queryable properties and full nested outputs as JSON strings. It does not create a graph node for every text line or field. OCR and AI snapshots are kept separately so the original extraction can be compared with the model's interpretation.
 
@@ -37,7 +41,12 @@ Ownership comes from the authenticated session. History and detail endpoints tra
 - `POST /api/bills` can retry saving an owned, staged job before it expires.
 - Browser spreadsheet edits are not automatically persisted; a refresh restores the originally saved workbook.
 
-No vector index or semantic-search workflow is currently implemented.
+The cosine vector index `paper_nomic_chunks` indexes `DocumentChunk.embedding`.
+The [document chatbot](../guides/chat.md) performs owner-scoped exact similarity
+search over these chunks and generates source-referenced answers. See
+[local embeddings](../guides/embeddings.md) for setup, limits, and existing-data
+migration. Bill/account deletion removes embedding groups and their chunks, also
+handling older direct Bill-to-chunk links.
 
 ## Duplicate upload reservations
 

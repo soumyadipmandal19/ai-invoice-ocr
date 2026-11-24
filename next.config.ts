@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
   },
   outputFileTracingIncludes: {
     "/api/extract": ["./python/extract.py", "./python/ocr/**/*.py"],
+    "/api/inngest": ["./python/embed.py"],
+    "/api/embeddings/demo": ["./python/embed.py"],
+    "/api/chat": ["./python/embed.py"],
   },
   turbopack: {
     rules: {

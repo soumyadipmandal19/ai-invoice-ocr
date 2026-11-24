@@ -1,8 +1,8 @@
 # Processing architecture
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
-![Node-based overview of local OCR, Inngest LLM classification and financial mapping, and Neo4j persistence](images/inngest-workflow.png)
+![Node-based overview of local OCR, Inngest LLM classification and financial mapping, and Neo4j persistence](../images/inngest-workflow.png)
 
 *Background processing runs in Inngest.*
 

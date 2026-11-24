@@ -1,6 +1,6 @@
 # Development guide
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
 ## Project structure
 
@@ -58,5 +58,5 @@ node --env-file=.env.local scripts/database/check-bill-queries.mjs
 
 ## Workbook templates
 
-See the [dataset guide](../data/bills/README.md) for schema details and rebuilding
+See the [dataset guide](../../data/bills/README.md) for schema details and rebuilding
 local workbook templates.

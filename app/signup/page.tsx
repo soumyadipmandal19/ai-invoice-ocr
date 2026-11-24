@@ -15,6 +15,6 @@ export default function SignUpPage() {
 }
 
 async function SignUpContent() {
-  if (await getUser()) redirect("/dashboard");
+  if (await getUser()) redirect("/workspace/dashboard");
   return <AuthForm mode="signup" />;
 }

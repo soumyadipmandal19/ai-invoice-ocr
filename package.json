@@ -5,6 +5,14 @@
   "scripts": {
     "setup:python": "python3 -m venv .venv && .venv/bin/python -m pip install -r python/requirements.txt",
     "test:python": ".venv/bin/python -m unittest discover -s python/tests -v",
+    "setup:embeddings": ".venv/bin/python -m pip install -r python/requirements.txt",
+    "download:embeddings": ".venv/bin/python python/embed.py --download",
+    "test:embeddings": "node --test scripts/tests/embeddings.test.mjs",
+    "test:chat": "node --test scripts/tests/chat.test.mjs",
+    "test:documents": "node --test scripts/tests/documents.test.mjs",
+    "check:chat": "node --env-file=.env.local scripts/database/check-chat.mjs",
+    "check:embedding-model": "node --env-file=.env.local scripts/database/check-embedding-model.mjs",
+    "backfill:embeddings": "node --env-file=.env.local scripts/database/backfill-embeddings.mjs",
     "test:classification": "node --test tests/classification.test.mjs",
     "test:currency": "node --test tests/currency.test.mjs",
     "postinstall": "node scripts/build/copy-pdf-worker.mjs",
@@ -18,7 +26,8 @@
     "check:neo4j": "node --env-file=.env.local scripts/database/check-neo4j.mjs",
     "test:auth": "node --test tests/auth.test.mjs",
     "test:workbook": "node --test tests/session-workbook.test.mjs",
-    "test:bills": "node --test tests/bills.test.mjs",
+    "test:bills": "node --test tests/bills.test.mjs scripts/tests/bill-deletion.test.mjs",
+    "test:workspace": "node --test scripts/tests/workspace.test.mjs scripts/tests/workspace-shell.test.mjs",
     "test:history": "node --test tests/bill-history.test.mjs"
   },
   "dependencies": {

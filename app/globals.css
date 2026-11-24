@@ -86,7 +86,7 @@ button, a, input, select, textarea {
   outline-offset: 4px;
 }
 
-:where(button, a, input, select, textarea):focus-visible {
+:where(button, a, input, select, textarea):not(.document-chat-input):focus-visible {
   outline: 2px solid var(--accent);
 }
 
@@ -164,6 +164,67 @@ select {
 
 .processing-orbit { animation: processing-orbit 3s linear infinite; }
 .processing-scan { animation: processing-scan 2.8s ease-in-out infinite; }
+
+@keyframes document-chat-open {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.document-chat-panel {
+  transform-origin: bottom right;
+  animation: document-chat-open 180ms ease-out;
+}
+
+.document-chat-launcher {
+  box-shadow: 0 4px 16px #0005;
+  transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.document-chat-launcher-icon {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .document-chat-launcher:hover {
+    background-color: var(--accent-hover);
+    box-shadow: 0 6px 20px #0006, 0 0 12px #bdff5414;
+    transform: translateY(-2px);
+  }
+}
+
+.document-chat-launcher:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 2px 8px #0004;
+}
+
+@keyframes chat-loading-dot {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+.chat-loading-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: chat-loading-dot 1.2s ease-in-out infinite;
+}
+
+.chat-loading-dot:nth-child(2) { animation-delay: 150ms; }
+.chat-loading-dot:nth-child(3) { animation-delay: 300ms; }
+
+.document-chat-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  box-shadow: 0 0 0 2px #bdff5410;
+}
+
+/* The composer provides the focus indicator for the entire message input. */
+.document-chat-input:focus,
+.document-chat-input:focus-visible {
+  outline: 0;
+  outline-offset: 0;
+  box-shadow: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -1,6 +1,8 @@
 "use client";
 
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+
+import { useWorkspaceState, useWorkspaceScroll } from "@/components/workspace-provider";
 
 const PAGE_SIZE = 100;
 
@@ -14,6 +16,8 @@ function columnLetter(index: number) {
 
 type Cell = { row: number; column: number };
 type GridProps = {
+  stateKey?: string;
+  columnKeys?: readonly string[];
   rows: string[][];
   widths: number[];
   editable: (row: number, column: number) => boolean;
@@ -26,13 +30,19 @@ type GridProps = {
   emptyMessage?: string;
 };
 
-export function SheetGrid({ rows, widths, editable, onEdit, selected, onSelect, rowActions, bottomBar, cellWarning, emptyMessage }: GridProps) {
-  const [wrap, setWrap] = useState(false);
-  const [zoom, setZoom] = useState(100);
+export function SheetGrid({ rows, widths, editable, onEdit, selected, onSelect, rowActions, bottomBar, cellWarning, emptyMessage, stateKey, columnKeys }: GridProps) {
+  const instance = useId();
+  const identity = stateKey || instance;
+  const viewport = useRef<HTMLDivElement>(null);
+  const [wrap, setWrap] = useWorkspaceState(`grid:${identity}:wrap`, false);
+  const [zoom, setZoom] = useWorkspaceState(`grid:${identity}:zoom`, 100);
   const grid = useRef<HTMLTableElement>(null);
-  const [editing, setEditing] = useState<(Cell & { value: string }) | null>(null);
+  const schema = (columnKeys || rows[0] || []).join("\u0000");
+  const [editor, setEditing] = useState<(Cell & { value: string; schema: string }) | null>(null);
+  // A removed/reordered column must never commit an editor to another field.
+  const editing = editor?.schema === schema ? editor : null;
   const editActive = useRef(false);
-  const [windowStart, setWindowStart] = useState(0);
+  const [windowStart, setWindowStart] = useWorkspaceState(`grid:${identity}:window`, 0);
   const columns = rows[0]?.length || 1;
   const lastRow = Math.max(0, rows.length - 1);
   const safeSelected = {
@@ -45,6 +55,7 @@ export function SheetGrid({ rows, widths, editable, onEdit, selected, onSelect, 
   const gridWidth = widths.reduce((sum, width) => sum + width * scale, 48) + (rowActions ? 100 : 0);
   const totalDataRows = rows.length - 1;
   const safeStart = Math.min(windowStart, Math.max(0, Math.floor((totalDataRows - 1) / PAGE_SIZE) * PAGE_SIZE));
+  useWorkspaceScroll(viewport, `grid:${identity}`, `${safeStart}:${totalDataRows}`);
   const visibleRows = [0, ...Array.from({ length: Math.min(PAGE_SIZE, totalDataRows - safeStart) }, (_, index) => safeStart + index + 1)];
 
   function focusCell(row: number, column: number) {
@@ -52,6 +63,8 @@ export function SheetGrid({ rows, widths, editable, onEdit, selected, onSelect, 
     if (next.row > 0) setWindowStart(Math.floor((next.row - 1) / PAGE_SIZE) * PAGE_SIZE);
     onSelect(next);
     requestAnimationFrame(() => {
+      // A new edit may have started before this deferred navigation runs.
+      if (editActive.current && editor?.schema === schema) return;
       const cell = grid.current?.querySelector<HTMLElement>(`[data-row="${next.row}"][data-column="${next.column}"]`);
       cell?.focus();
       cell?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -61,7 +74,7 @@ export function SheetGrid({ rows, widths, editable, onEdit, selected, onSelect, 
   function startEdit(initial?: string) {
     if (!canEdit) return;
     editActive.current = true;
-    setEditing({ ...safeSelected, value: initial ?? value });
+    setEditing({ ...safeSelected, value: initial ?? value, schema });
   }
 
   function finishEdit(save: boolean) {
@@ -110,10 +123,10 @@ export function SheetGrid({ rows, widths, editable, onEdit, selected, onSelect, 
         <textarea aria-label="Selected cell value" rows={1} value={value} readOnly={!canEdit} onChange={(event) => onEdit(safeSelected.row, safeSelected.column, event.target.value)} className="h-8 min-h-8 min-w-0 flex-1 resize-y bg-panel px-2 py-1.5 text-xs leading-5 text-body outline-accent read-only:bg-background" />
         <button type="button" aria-pressed={wrap} onClick={() => setWrap((current) => !current)} title="Wrap cell text" className={`shrink-0 border-l border-line px-3 text-[11px] focus-visible:outline-2 focus-visible:outline-accent ${wrap ? "bg-accent-soft text-accent" : "text-muted hover:bg-surface"}`}>Wrap text</button>
       </div>
-      <div className="relative isolate min-h-0 flex-1 overflow-auto bg-background">
+      <div ref={viewport} className="relative isolate min-h-0 flex-1 overflow-auto bg-background">
         <table ref={grid} role="grid" aria-label="Extracted data spreadsheet" aria-rowcount={rows.length + 1} aria-colcount={columns + 1 + (rowActions ? 1 : 0)} className="w-full table-fixed border-separate border-spacing-0 text-left" style={{ minWidth: gridWidth, fontSize: 14 * scale }}>
-          <colgroup><col style={{ width: 48 }} />{widths.map((width, index) => <col key={index} style={{ width: width * scale, minWidth: width * scale }} />)}{rowActions && <col style={{ width: 100, minWidth: 100 }} />}</colgroup>
-          <thead><tr aria-rowindex={1} className="h-8 text-xs text-muted"><th className="sticky left-0 top-0 z-50 min-w-12 border-b border-r border-line-strong bg-surface text-center" aria-label="Row numbers" />{widths.map((_, index) => <th key={index} scope="col" className={`sticky top-0 z-30 border-b border-r border-line-strong text-center font-medium ${safeSelected.column === index ? "bg-accent-selected text-accent-text" : "bg-surface"}`}>{columnLetter(index)}</th>)}{rowActions && <th scope="col" className="sticky right-0 top-0 z-50 border-b border-l border-line-strong bg-surface text-center font-medium">{columnLetter(columns)}</th>}</tr></thead>
+          <colgroup><col style={{ width: 48 }} />{widths.map((width, index) => <col key={columnKeys?.[index] ?? index} style={{ width: width * scale, minWidth: width * scale }} />)}{rowActions && <col style={{ width: 100, minWidth: 100 }} />}</colgroup>
+          <thead><tr aria-rowindex={1} className="h-8 text-xs text-muted"><th className="sticky left-0 top-0 z-50 min-w-12 border-b border-r border-line-strong bg-surface text-center" aria-label="Row numbers" />{widths.map((_, index) => <th key={columnKeys?.[index] ?? index} scope="col" className={`sticky top-0 z-30 border-b border-r border-line-strong text-center font-medium ${safeSelected.column === index ? "bg-accent-selected text-accent-text" : "bg-surface"}`}>{columnLetter(index)}</th>)}{rowActions && <th scope="col" className="sticky right-0 top-0 z-50 border-b border-l border-line-strong bg-surface text-center font-medium">{columnLetter(columns)}</th>}</tr></thead>
           <tbody>{visibleRows.map((row) => (
             <tr key={row} aria-rowindex={row + 2}>
               <th scope="row" className={`sticky left-0 w-12 min-w-12 border-b border-r border-line text-center text-xs font-normal ${row === 0 ? "top-8 z-40 h-7 bg-raised" : `z-10 ${safeSelected.row === row ? "bg-accent-selected text-accent-text" : "bg-surface text-subtle"}`}`}>{row + 1}</th>
@@ -121,15 +134,21 @@ export function SheetGrid({ rows, widths, editable, onEdit, selected, onSelect, 
                 const active = safeSelected.row === row && safeSelected.column === column;
                 const isEditing = editing?.row === row && editing.column === column;
                 const warning = cellWarning?.(row, column);
-                return <td key={column} role="gridcell" aria-selected={active} aria-readonly={!editable(row, column)} aria-label={`${columnLetter(column)}${row + 1}: ${row === 0 ? cell : `${rows[0][column]}: ${cell}`}`} tabIndex={active ? 0 : -1} data-row={row} data-column={column}
-                  onFocus={() => onSelect({ row, column })} onClick={(event) => event.currentTarget.focus()} onDoubleClick={() => { if (editable(row, column)) { editActive.current = true; setEditing({ row, column, value: cell }); } }} onKeyDown={(event) => onKeyDown(event, row, column)}
+                return <td key={columnKeys?.[column] ?? column} role="gridcell" aria-selected={active} aria-readonly={!editable(row, column)} aria-label={`${columnLetter(column)}${row + 1}: ${row === 0 ? cell : `${rows[0][column]}: ${cell}`}`} tabIndex={active ? 0 : -1} data-row={row} data-column={column}
+                  onFocus={() => onSelect({ row, column })} onClick={(event) => { if (!isEditing) event.currentTarget.focus(); }} onDoubleClick={() => { if (!isEditing && editable(row, column)) { editActive.current = true; setEditing({ row, column, value: cell, schema }); } }} onKeyDown={(event) => onKeyDown(event, row, column)}
                   className={`max-w-[600px] border-b border-r border-line p-0 outline-none ${row === 0 ? "sticky top-8 z-20 bg-surface font-semibold text-body" : `relative ${editable(row, column) ? "bg-panel text-body" : "bg-background text-muted"}`} ${active ? "ring-2 ring-inset ring-accent" : ""}`}>
-                  {isEditing ? <textarea autoFocus aria-label={`Edit ${columnLetter(column)}${row + 1}`} value={editing.value} onChange={(event) => setEditing({ ...editing, value: event.target.value })} onBlur={() => finishEdit(true)}
+                  <div aria-hidden={isEditing || undefined} title={warning || cell || undefined} className={`min-h-7 px-2 py-1 leading-5 ${isEditing ? "invisible" : ""} ${warning ? "bg-amber-300/5 text-amber-200" : ""} ${wrap ? "whitespace-pre-wrap break-words" : "truncate"}`}>{warning && <span className="sr-only">Needs review: {warning} </span>}{cell || (warning ? "Missing" : "\u00a0")}</div>
+                  {isEditing && <textarea autoFocus rows={1} aria-label={`Edit ${columnLetter(column)}${row + 1}`} value={editing.value} onChange={(event) => setEditing({ ...editing, value: event.target.value })} onBlur={() => finishEdit(true)}
+                    onFocus={(event) => {
+                      const editor = event.currentTarget;
+                      editor.setSelectionRange(editor.value.length, editor.value.length);
+                      editor.scrollTop = editor.scrollHeight;
+                    }}
                     onKeyDown={(event) => {
                       event.stopPropagation();
                       if (event.key === "Escape") { event.preventDefault(); finishEdit(false); focusCell(row, column); }
                       else if (event.key === "Tab" || (event.key === "Enter" && !event.altKey)) { finishEdit(true); navigate(event, row, column); }
-                    }} className="block min-h-12 w-full resize-y border-0 bg-panel px-3 py-2 text-sm leading-6 outline-none" /> : <div title={warning || cell || undefined} className={`min-h-7 px-2 py-1 leading-5 ${warning ? "bg-amber-300/5 text-amber-200" : ""} ${wrap ? "whitespace-pre-wrap break-words" : "truncate"}`}>{warning && <span className="sr-only">Needs review: {warning} </span>}{cell || (warning ? "Missing" : "\u00a0")}</div>}
+                    }} style={{ fontSize: "inherit", outline: "none", outlineOffset: 0 }} className="absolute inset-0 block h-full min-h-0 w-full resize-none overflow-auto rounded-none border-0 bg-panel px-2 py-1 leading-5 text-body shadow-none outline-none ring-2 ring-inset ring-accent" />}
                 </td>;
               })}
               {rowActions && <td role="gridcell" aria-readonly="true" className={`sticky right-0 border-b border-l border-line-strong px-2 py-0 text-center ${row === 0 ? "top-8 z-40 bg-surface font-semibold text-body" : "z-10 bg-panel"}`}>{row === 0 ? "Actions" : rowActions(row)}</td>}

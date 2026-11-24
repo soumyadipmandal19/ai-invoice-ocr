@@ -41,7 +41,7 @@ export default function AuthForm({ mode }: { mode: "signin" | "signup" }) {
         return;
       }
       // Load the dashboard with the new cookie and a fresh client router cache.
-      window.location.replace("/dashboard");
+      window.location.replace("/workspace/dashboard");
     } catch {
       setError("We could not reach the server. Check your connection and try again.");
     } finally {

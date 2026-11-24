@@ -3,3 +3,6 @@
 PyMuPDF==1.28.2
 # Raster image decoding and EXIF orientation for uploaded scans/photos.
 Pillow==13.0.0
+# Local embedding generation using the Nomic model and GPT4All runtime.
+nomic[local]==3.9.0
+gpt4all==2.8.2

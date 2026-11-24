@@ -3,6 +3,7 @@ import "server-only";
 import { completeClassificationJob, readClassificationArtifacts, readClassificationJob, deleteClassificationJobForOwner } from "@/lib/server/classification/store";
 import { normalizeBill } from "@/lib/server/bills/normalize";
 import { storeBill, deleteOwnedBill } from "@/lib/server/bills/store";
+import { embeddingsEnabled, queueBillEmbeddings } from "@/lib/server/embeddings/service";
 
 export class BillSaveError extends Error {
   status: number;
@@ -28,5 +29,9 @@ export async function saveOrganizedBill(jobId: string, ownerUserId: string) {
   const saved = await storeBill(bill, items, artifacts, job.uploadKey);
   // Complete the local job only after the graph transaction commits successfully.
   await completeClassificationJob(job.id, job.result, job.workbook, saved.billId);
+  if (embeddingsEnabled()) {
+    try { await queueBillEmbeddings(saved.billId, ownerUserId); }
+    catch { console.error("Bill saved, but local embeddings could not be queued. Retry POST /api/embeddings."); }
+  }
   return saved;
 }

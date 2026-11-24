@@ -5,7 +5,7 @@ This is the single API reference for authentication, document extraction, backgr
 The website's
 signup and sign-in forms call `/api/auth/signup` and `/api/auth/login` directly
 using same-origin JSON requests. On success the browser saves the session cookie
-and the page navigates to `/dashboard`; API errors appear inline without clearing
+and the page navigates to `/workspace/dashboard`; API errors appear inline without clearing
 the form. External clients can call the same endpoints below. Dashboard sign-out
 uses a Server Action that revokes the same database-backed session.
 
@@ -24,6 +24,12 @@ uses a Server Action that revokes the same database-backed session.
 | POST | `/api/bills` | Retry saving an organized job | Session cookie |
 | GET | `/api/bills/{id}` | Read saved OCR, AI, and workbook snapshots | Session cookie |
 | DELETE | `/api/bills/{id}` | Delete an owned bill and its child data | Session cookie |
+| POST | `/api/embeddings` | Queue local embeddings for saved bills | Session cookie |
+| GET | `/api/embeddings?billId=UUID` | Read owned embedding progress | Session cookie |
+| POST | `/api/embeddings/demo` | Generate a temporary vector without saving it | Session cookie |
+| POST | `/api/chat` | Ask questions about indexed bills with source references | Session cookie |
+| GET | `/api/chat/documents` | List owned document choices for chat | Session cookie |
+| GET | `/api/documents` | List file-library metadata and folder counts | Session cookie |
 | GET | `/api/health/neo4j` | Check database connectivity | Session cookie |
 | GET, POST, PUT | `/api/inngest` | Inngest SDK integration endpoint | Inngest protocol/configuration |
 
@@ -979,9 +985,26 @@ and merge logic are in `lib/bills/history.ts`. Tests: `npm run test:bills` and
 ### DELETE /api/bills/{id}
 
 Permanently deletes a bill belonging to the signed-in user and all currently
-modeled child data: BillItem, OCRExtraction, and LLMResult nodes. Their
-relationships are deleted with them. The user's account, login sessions, and
-other bills are preserved.
+modeled child data: BillItem, OCRExtraction, LLMResult, DocumentEmbeddings,
+and DocumentChunk nodes. Both `Bill → DocumentEmbeddings → DocumentChunk` and
+legacy direct `Bill → DocumentChunk` links are covered. The matching owned
+DocumentUpload tracking node (`User → HAS_UPLOAD`, with `jobId` equal to the
+Bill ID) is also removed. Relationships are detached as each node is deleted.
+The user's account, login sessions, and other bills are preserved.
+
+The graph deletion runs atomically under an owner lock. A deleted-Bill ID marker
+makes retries idempotent and blocks delayed saves from recreating the bill.
+The service then removes the owner's temporary classification job/artifact
+files. Embedding workers require the existing owned Bill and group before
+writing results.
+
+Audit on 2026-11-24: read-only relationship inspection and the deletion query's
+matching clauses covered 4 Bills, 4 BillItems, 4 OCRExtractions, 4 LLMResults,
+4 DocumentEmbeddings, 8 DocumentChunks and 1 matching DocumentUpload. All live
+queries reported zero updates. The live DELETE endpoint was not called; no
+existing database data was changed. `npm run test:bills` includes explicit
+query-coverage checks for current/legacy embedding paths, upload tracking,
+ownership, retry markers and failure handling using a mocked driver.
 
 **Authentication:** `paper-text-session` cookie. The owner ID is read from the
 verified session, never accepted from the request body.
@@ -1066,3 +1089,70 @@ saved workbooks can omit these new columns. The original OCR snapshot is retaine
 review warnings. Checks preserve printed amounts, including discrepancies;
 ambiguous currency/date/number formats are not guessed. No endpoint or request
 body changed. These checks apply to new runs, not existing saved snapshots.
+
+## Document library
+
+`GET /api/documents?offset=0&q=invoice&folder=invoice` returns `files`, `nextOffset`,
+and `folders`. Each file contains `billId`, `fileName`, `documentType`, `billNumber`,
+`createdAt`, and `pageCount`. There are at most 50 files per page. `q` searches
+filenames/invoice numbers (up to 200 characters); optional `folder` uses a supported
+document type. Folder counts cover the owner's whole library. Responses require a
+session and use `Cache-Control: no-store`. Invalid filters/pages return 400, unsigned
+requests 401, database failure 503. No OCR JSON, model output, or vectors are loaded
+by this listing. Detail pages use the same owner-scoped bill outputs as `/api/bills/{id}`.
+
+## Document chat
+
+Optional `billId` on `POST /api/chat` restricts every text/record query to one owned
+bill. Omit it or send `null` for all the current user's bills. Invalid IDs return
+400 and unknown/foreign IDs return the same 404. The chat interface no longer asks
+users to choose documents. It resolves references in the question automatically.
+Optional `contextBillId` carries the last resolved bill for conversational follow-ups
+and is always ownership-checked; the response returns its updated value or `null`.
+Chat remains a direct request/response workflow.
+
+Simple English count, filename-list, and saved-total questions are routed to
+parameterized record queries; these can work before embeddings are ready and
+return `model: null`/empty sources. Total amounts are summed separately by known
+currency, with exclusions disclosed. Complete-summary requests inspect all scoped
+chunks (maximum 40/40,000 characters), and refuse incomplete or oversized scopes.
+
+`GET /api/chat/documents?offset=0` returns `{ "documents": [{ "billId": "UUID",
+"fileName": "invoice.pdf", "billNumber": "123" }], "nextOffset": null }` with up
+to 100 entries, session ownership, and `Cache-Control: no-store`. It returns no
+OCR or embeddings. Invalid offset: 400; unsigned: 401; unavailable database: 503.
+
+`POST /api/chat` requires a signed-in session, same-origin JSON, and an input such
+as `{ "question": "When is payment due?", "history": [] }`. History optionally
+contains up to six `{ "role": "user" | "assistant", "content": "..." }` entries.
+Questions allow 1–1,000 characters; history allows 1,000 per entry/4,000 total;
+the body limit is 8,192 bytes. Ownership is always taken from the session.
+
+Returns `{ "answer": "... [S1]", "sources": [...], "model": "...", "indexing":
+{ "totalBills": 4, "readyBills": 4 } }`. Each source includes `id`, `billId`,
+`chunkId`, `fileName`, `page`, `text`, and `score`; embeddings are never returned.
+No-match/no-index responses have empty sources and `model: null`. Nothing in this
+workflow writes chat messages or vectors. All responses use `Cache-Control:
+no-store`. Errors: 401 unsigned, 403 cross-origin, 400 invalid input, 413 oversized,
+415 wrong content type, 429 rate/concurrency/provider limit, 502 invalid/truncated
+model output, 503 unavailable worker/database/provider. See
+[chat setup and limits](../guides/chat.md).
+
+## Local embeddings
+
+`POST /api/embeddings/demo` (signed-in, same-origin, JSON): `{ "text": "Your text" }`
+returns `model`, `dimensions`, `inferenceMode`, and the 768-number `vector`. Input
+must be nonblank and at most 1,000 Unicode characters. The endpoint directly runs
+local inference without database writes, file output, or Inngest events. Results
+use `Cache-Control: no-store`. One demo request per server process can run at a
+time; additional requests return 429. Model failures return a generic 503.
+
+`POST /api/embeddings` (signed-in, same-origin, JSON): `{ "billId": "UUID" }`
+queues a saved bill, or `{ "offset": 0 }` queues up to ten existing bills owned by
+the current user. Returns 202 with queue results and, for backfills, `nextOffset`.
+Requires `EMBEDDINGS_ENABLED=1` and Inngest. Missing bill: 404; unavailable original
+OCR on a single bill: 409; invalid body: 400/413/415; unavailable service: 503.
+
+`GET /api/embeddings?billId=UUID` (signed-in) returns `billId`, `status`, `profile`,
+`chunkCount`, and `hasOcr`. It never returns vectors or OCR content. Both endpoints
+use `Cache-Control: no-store`. See [setup and examples](../guides/embeddings.md).

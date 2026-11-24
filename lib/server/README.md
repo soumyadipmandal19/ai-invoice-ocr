@@ -6,6 +6,15 @@ For endpoint URLs, request bodies, responses, and client examples, see the
 All runtime modules here are server-only. Keep browser-safe types in `types/`
 and shared pure transformations in `lib/`.
 
+`chat/` provides authenticated question handling, owner-scoped semantic retrieval,
+bounded conversation context, and evidence-based answers via the configured
+OpenRouter model. See [document chatbot](../../docs/guides/chat.md).
+
+`embeddings/` contains local Python inference, page chunking, owner-scoped chunk
+storage, background indexing, and authenticated backfill/status handlers. See
+[local embeddings setup](../../docs/guides/embeddings.md). Embeddings are independent of
+chat/answer generation and require `EMBEDDINGS_ENABLED=1`.
+
 ```text
 lib/server/
 ├── auth/

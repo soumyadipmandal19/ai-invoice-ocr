@@ -7,6 +7,8 @@ import { saveOrganizedBill, BillSaveError } from "@/lib/server/bills/service";
 import { BillOwnerMissingError } from "@/lib/server/bills/store";
 import { organizeFinancialDocument } from "@/lib/financial/workbook";
 import { mergeOrganizationChunks, prepareOrganizationInput, type OrganizationChunkResult } from "@/lib/financial/organization";
+import { indexBillEmbeddings } from "@/lib/server/embeddings/service";
+import { failEmbedding } from "@/lib/server/embeddings/store";
 
 // Invoke from the Dev Server to verify registration and step execution.
 export const configurationCheck = inngest.createFunction(
@@ -102,4 +104,26 @@ export const classifyUploadedDocument = inngest.createFunction(
   },
 );
 
-export const functions = [configurationCheck, classifyUploadedDocument];
+export const embedSavedDocument = inngest.createFunction(
+  {
+    id: "embed-saved-document",
+    triggers: { event: "document/embedding.requested" },
+    retries: 2,
+    concurrency: { limit: 1 },
+    onFailure: async ({ event }) => {
+      const { billId, ownerUserId, requestId } = event.data.event.data;
+      if ([billId, ownerUserId, requestId].every((value) => typeof value === "string" && value.length > 0)) {
+        await failEmbedding(billId, ownerUserId, requestId);
+      }
+    },
+  },
+  async ({ event, step }) => {
+    const { billId, ownerUserId, requestId } = event.data;
+    if (![billId, ownerUserId, requestId].every((value) => typeof value === "string" && value.length > 0)) {
+      throw new NonRetriableError("Invalid embedding event.");
+    }
+    return step.run("embed-and-store-ocr", () => indexBillEmbeddings(billId, ownerUserId, requestId));
+  },
+);
+
+export const functions = [configurationCheck, classifyUploadedDocument, embedSavedDocument];

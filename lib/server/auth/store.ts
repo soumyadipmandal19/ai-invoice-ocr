@@ -104,16 +104,21 @@ export async function deleteAccount(token: string | undefined): Promise<boolean>
      OPTIONAL MATCH (b)-[:HAS_ITEM]->(item:BillItem)
      OPTIONAL MATCH (b)-[:HAS_OCR]->(ocr:OCRExtraction)
      OPTIONAL MATCH (b)-[:HAS_LLM_RESULT]->(llm:LLMResult)
+     OPTIONAL MATCH (b)-[:HAS_EMBEDDINGS]->(embeddings:DocumentEmbeddings)
+     OPTIONAL MATCH (b)-[:HAS_EMBEDDINGS|HAS_CHUNK*1..2]->(chunk:DocumentChunk)
      WITH u, collect(DISTINCT b) AS bills, collect(DISTINCT item) AS items,
-       collect(DISTINCT ocr) AS ocrSnapshots, collect(DISTINCT llm) AS llmSnapshots
+       collect(DISTINCT ocr) AS ocrSnapshots, collect(DISTINCT llm) AS llmSnapshots,
+       collect(DISTINCT chunk) AS chunks, collect(DISTINCT embeddings) AS embeddingGroups
      OPTIONAL MATCH (s:Session)-[:BELONGS_TO]->(u)
-     WITH u, bills, items, ocrSnapshots, llmSnapshots, collect(DISTINCT s) AS sessions
+     WITH u, bills, items, ocrSnapshots, llmSnapshots, chunks, embeddingGroups, collect(DISTINCT s) AS sessions
      OPTIONAL MATCH (u)-[:HAS_UPLOAD]->(upload:DocumentUpload)
-     WITH u, bills, items, ocrSnapshots, llmSnapshots, sessions, collect(DISTINCT upload) AS uploads
+     WITH u, bills, items, ocrSnapshots, llmSnapshots, chunks, embeddingGroups, sessions, collect(DISTINCT upload) AS uploads
      FOREACH (item IN items | DETACH DELETE item)
      FOREACH (bill IN bills | DETACH DELETE bill)
      FOREACH (snapshot IN ocrSnapshots | DETACH DELETE snapshot)
      FOREACH (snapshot IN llmSnapshots | DETACH DELETE snapshot)
+     FOREACH (chunk IN chunks | DETACH DELETE chunk)
+     FOREACH (group IN embeddingGroups | DETACH DELETE group)
      FOREACH (session IN sessions | DETACH DELETE session)
      FOREACH (upload IN uploads | DETACH DELETE upload)
      DETACH DELETE u

@@ -1,6 +1,6 @@
 # Deployment
 
-[Back to README](../README.md)
+[Back to README](../../README.md)
 
 ## Runtime requirements
 
@@ -14,4 +14,4 @@ In production, disable `INNGEST_DEV`, configure `INNGEST_EVENT_KEY` and `INNGEST
 
 Temporary classification inputs live on the filesystem. Deployments with multiple app instances need a shared job directory accessible to upload and workflow requests, or a different shared job-storage implementation. Larger workloads should move extraction to a persistent worker. Authentication includes seven-day HTTP-only sessions and salted scrypt password hashing; email verification and password recovery are not implemented.
 
-See the [environment template](../.env.example) for configuration keys.
+See the [environment template](../../.env.example) for configuration keys.

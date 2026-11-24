@@ -1,6 +1,8 @@
 "use client";
 
 import { useId, useImperativeHandle, useMemo, useState, type Ref } from "react";
+import { useWorkspaceState } from "@/components/workspace-provider";
+import ColumnPicker from "@/components/column-picker";
 import WorkbookTabs from "@/components/workbook-tabs";
 import { SheetGrid } from "@/components/sheet-grid";
 import { BILL_ESSENTIAL_COLUMNS, ITEM_ESSENTIAL_COLUMNS, EMPTY_BILL_FILTERS, billReview, receiptValues, filterWorkspaceRecords, selectSessionColumns, buildSessionSheets, canEditSessionCell, editSessionWorkbook, sessionColumnLabel, type BillFilters } from "@/lib/bills/session-workbook";
@@ -18,17 +20,17 @@ export default function SessionWorkbook({ records, onReview, onWorkbookChange, o
   onReview: (id: string) => void; onWorkbookChange: (id: string, workbook: FinancialWorkbook) => void;
   onDeleted: (id: string) => void; deleteDisabled?: boolean;
 }) {
-  const [sheetId, setSheetId] = useState("receipts");
-  const [filters, setFilters] = useState<BillFilters>({ ...EMPTY_BILL_FILTERS });
-  const [columnChoices, setColumnChoices] = useState<Record<string, string[]>>({});
-  const [selected, setSelected] = useState({ row: 1, column: 0 });
+  const [sheetId, setSheetId] = useWorkspaceState("workbook.sheet", "receipts");
+  const [filters, setFilters] = useWorkspaceState<BillFilters>("workbook.filters", () => ({ ...EMPTY_BILL_FILTERS }));
+  const [columnChoices, setColumnChoices] = useWorkspaceState<Record<string, string[]>>("workbook.columns", () => ({}));
+  const [selected, setSelected] = useWorkspaceState("workbook.selection", () => ({ row: 1, column: 0 }));
   const [deleteTarget, setDeleteTarget] = useState<WorkspaceRecord | null>(null);
   const [exportError, setExportError] = useState("");
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [filtersExpanded, setFiltersExpanded] = useWorkspaceState("workbook.filtersExpanded", false);
   const filtersId = useId();
   useImperativeHandle(ref, () => ({ openReview() {
     setSheetId("receipts"); setFilters({ ...EMPTY_BILL_FILTERS }); setFiltersExpanded(false); setSelected({ row: 1, column: 0 });
-  } }), []);
+  } }), [setSheetId, setFilters, setFiltersExpanded, setSelected]);
   const visible = useMemo(() => filterWorkspaceRecords(records, filters), [records, filters]);
   const sheets = useMemo(() => buildSessionSheets(visible), [visible]);
   const fullSheet = sheets.find((entry) => entry.id === sheetId) || sheets[0];
@@ -40,7 +42,6 @@ export default function SessionWorkbook({ records, onReview, onWorkbookChange, o
   const selectedReview = selectedRecord ? billReview(selectedRecord) : null;
   const vendors = [...new Set(records.map((record) => receiptValues(record).merchant_name).filter(Boolean))].sort();
   const currencies = [...new Set(records.map((record) => { const value = receiptValues(record).currency; return currencyCode(value) || value || "unknown"; }))].sort();
-  const rowIdentity = sheet.sources.map((source) => `${source.recordId}:${source.sheetId ?? ""}:${source.row ?? ""}`).join("|");
   const activeFilters = Object.values(filters).some(Boolean);
 
   function updateFilter(key: keyof BillFilters, value: string) {
@@ -52,7 +53,6 @@ export default function SessionWorkbook({ records, onReview, onWorkbookChange, o
       const next = keys.includes(key) ? keys.filter((column) => column !== key) : [...keys, key];
       return next.length ? { ...current, [columnGroup]: next } : current;
     });
-    setSelected({ row: 1, column: 0 });
   }
   function deleteAction(row: number) {
     const record = records.find((entry) => entry.id === sheet.sources[row - 1]?.recordId);
@@ -84,10 +84,7 @@ export default function SessionWorkbook({ records, onReview, onWorkbookChange, o
         <div className="mr-auto"><span className="text-sm font-medium text-body">{sheet.name}</span><span className="ml-2 text-xs text-subtle">{sheet.rows.length} {sheetId === "items" ? "items" : "bills"}{activeFilters ? " matching filters" : ""}</span></div>
         {selectedRecord && (selectedRecord.result || selectedRecord.workbook) && <button type="button" onClick={() => onReview(selectedRecord.id)} className="h-8 rounded-md px-2.5 text-sm text-muted hover:bg-surface hover:text-foreground">Open bill &amp; source</button>}
         {selectedRecord?.workbook && selectedReview?.status !== "Reviewed" && <button type="button" onClick={markReviewed} disabled={selectedReview?.reasons.some((reason) => reason !== "Not yet marked as reviewed.")} title="Resolve missing values and source warnings before marking the bill reviewed" className="h-8 rounded-md border border-line px-2.5 text-sm text-body hover:bg-surface disabled:opacity-40">Mark reviewed</button>}
-        <details className="relative" onBlur={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}>
-          <summary className="flex h-8 list-none items-center rounded-md border border-line px-3 text-sm text-body hover:bg-surface">Columns <span className="ml-1.5 text-xs text-subtle">{sheet.columns.length}</span></summary>
-          <div className="absolute right-0 z-[70] mt-2 w-64 rounded-lg border border-line-strong bg-panel p-2 shadow-xl"><div className="mb-2 flex gap-2 border-b border-line pb-2"><button type="button" onClick={() => { setColumnChoices((current) => ({ ...current, [columnGroup]: essentials })); setSelected({ row: 1, column: 0 }); }} className="rounded px-2 py-1 text-sm text-accent hover:bg-surface">Essential</button><button type="button" onClick={() => { setColumnChoices((current) => ({ ...current, [columnGroup]: fullSheet.columns })); setSelected({ row: 1, column: 0 }); }} className="rounded px-2 py-1 text-sm text-body hover:bg-surface">Show all</button></div><div className="max-h-64 overflow-y-auto">{fullSheet.columns.map((key) => <label key={key} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-body hover:bg-surface"><input type="checkbox" checked={columnKeys.includes(key)} disabled={sheet.columns.length === 1 && columnKeys.includes(key)} onChange={() => toggleColumn(key)} className="accent-accent" />{sessionColumnLabel(key)}</label>)}</div></div>
-        </details>
+        <ColumnPicker columns={fullSheet.columns} selected={columnKeys} onToggle={toggleColumn} onEssential={() => setColumnChoices((current) => ({ ...current, [columnGroup]: essentials }))} onShowAll={() => setColumnChoices((current) => ({ ...current, [columnGroup]: fullSheet.columns }))} />
         <button type="button" disabled={!sheet.rows.length} onClick={() => saveDownload(new Blob([sheetToCsv({ ...sheet, columns: sheet.columns.map(sessionColumnLabel) })], { type: "text/csv;charset=utf-8" }), `bills-${sheet.id}.csv`)} className="h-8 rounded-md border border-line px-3 text-sm text-body hover:bg-surface disabled:opacity-40">CSV</button>
         <button type="button" onClick={downloadExcel} disabled={!sheet.rows.length} className="h-8 rounded-md border border-accent/30 bg-accent-soft px-3 text-sm font-medium text-accent hover:border-accent disabled:opacity-40">Export Excel</button>
       </div>
@@ -105,7 +102,7 @@ export default function SessionWorkbook({ records, onReview, onWorkbookChange, o
 
       </div>
       {exportError && <p role="alert" className="px-3 py-2 text-sm text-red-200">{exportError}</p>}
-      <SheetGrid key={`${sheet.id}-${JSON.stringify(filters)}-${sheet.columns.join(",")}-${rowIdentity}`} rows={[sheet.columns.map(sessionColumnLabel), ...sheet.rows]} bottomBar={<WorkbookTabs sheets={sheets.map((entry) => ({ id: entry.id, name: entry.name, count: entry.rows.length }))} activeId={sheet.id} onChange={(id) => { setSheetId(id); setSelected({ row: 1, column: 0 }); }} />} widths={sheet.columns.map((column) => ["notes", "review_notes", "File", "product_name"].includes(column) ? 260 : column === "merchant_name" ? 200 : ["currency", "quantity", "pages", "Index"].includes(column) ? 100 : 150)} selected={selected} onSelect={setSelected} editable={(row, column) => canEditSessionCell(sheet, row, column)} cellWarning={(row, column) => row > 0 ? sheet.sources[row - 1]?.issues?.[sheet.columns[column]] : undefined} rowActions={sheet.id !== "items" ? deleteAction : undefined} emptyMessage={activeFilters ? "No bills match these filters. Try clearing or changing them." : sheetId === "needs-review" ? "No bills need review." : undefined} onEdit={(row, column, value) => { const update = editSessionWorkbook(records, sheet, row, column, value); if (update) onWorkbookChange(update.id, update.workbook); }} />
+      <SheetGrid stateKey={`combined:${sheet.id}:${JSON.stringify(filters)}`} key={`${sheet.id}-${JSON.stringify(filters)}`} columnKeys={sheet.columns} rows={[sheet.columns.map(sessionColumnLabel), ...sheet.rows]} bottomBar={<WorkbookTabs sheets={sheets.map((entry) => ({ id: entry.id, name: entry.name, count: entry.rows.length }))} activeId={sheet.id} onChange={(id) => { setSheetId(id); setSelected({ row: 1, column: 0 }); }} />} widths={sheet.columns.map((column) => ["notes", "review_notes", "File", "product_name"].includes(column) ? 260 : column === "merchant_name" ? 200 : ["currency", "quantity", "pages", "Index"].includes(column) ? 100 : 150)} selected={selected} onSelect={setSelected} editable={(row, column) => canEditSessionCell(sheet, row, column)} cellWarning={(row, column) => row > 0 ? sheet.sources[row - 1]?.issues?.[sheet.columns[column]] : undefined} rowActions={sheet.id !== "items" ? deleteAction : undefined} emptyMessage={activeFilters ? "No bills match these filters. Try clearing or changing them." : sheetId === "needs-review" ? "No bills need review." : undefined} onEdit={(row, column, value) => { const update = editSessionWorkbook(records, sheet, row, column, value); if (update) onWorkbookChange(update.id, update.workbook); }} />
       {deleteTarget && <DeleteBillDialog key={deleteTarget.id} record={deleteTarget} onCancel={() => setDeleteTarget(null)} onDeleted={(id) => { setDeleteTarget(null); setSelected({ row: 1, column: 0 }); onDeleted(id); }} />}
       <details className="max-h-[25dvh] shrink-0 overflow-auto border-t border-line px-3 py-2 text-xs leading-5 text-muted"><summary className="cursor-pointer text-subtle hover:text-muted">{selectedReview?.needsReview ? `Selected bill: ${selectedReview.reasons.length} review checks` : "Workbook help"}</summary>{selectedReview?.needsReview && <ul className="mt-2 list-disc space-y-1 pl-4 text-amber-200">{selectedReview.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}<p className="mt-2">Bills has one row per document; Bill Items has one row per product or service. Needs review shows the same bills with outstanding checks. Double-click a financial cell to edit. Use Columns to reveal additional fields.</p><p>Open bill &amp; source to inspect OCR evidence. Excel includes both financial sheets with all columns and matching Bill IDs, using your current filters and edits. Printed values are preserved as text. Edits remain in this tab; export before leaving.</p></details>
     </div>

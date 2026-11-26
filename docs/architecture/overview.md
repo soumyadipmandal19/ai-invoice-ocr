@@ -30,6 +30,22 @@ flowchart TD
 
 PyMuPDF reads usable native text directly. Pages with images, garbled text, or drawn content without readable text trigger OCR as needed. Mixed pages can combine native text and recognized image text. Image uploads are decoded and oriented with Pillow, placed on a PDF page, and processed through the same OCR pipeline.
 
+Currency extraction also checks legacy fonts that draw a currency symbol at a
+different character code. A verified rendered-glyph fingerprint recovers known
+rupee symbols encoded as backticks; font names alone never establish a currency.
+Unrecognized standalone backticks next to amounts can trigger targeted visual OCR
+at 300 and 400 DPI. Both readings must agree on a supported currency symbol and
+the exact original amount before changing the symbol. At most four regions per
+page are attempted, with a one-million-pixel limit per rendered crop. Ambiguous
+matches, rotated-page crops, and failed supplementary OCR preserve native text
+and surface a review warning. Text and word coordinates are corrected together
+before field/table extraction. Ordinary backticks are not globally replaced.
+
+This recovery applies during extraction. Existing saved OCR/AI snapshots remain
+unchanged, and duplicate uploads still open the saved result rather than rerunning
+extraction. `Rs.` alone remains ambiguous; a verified `₹` establishes INR and is
+compatible with the shared rupee abbreviation.
+
 Python returns page text, extraction methods, candidate fields, tables, and warnings. The upload file is removed after the extraction request. The original PDF or image is not saved in Neo4j.
 
 ### 2. LLM processing in Inngest

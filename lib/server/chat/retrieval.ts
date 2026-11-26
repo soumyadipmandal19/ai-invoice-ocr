@@ -9,20 +9,21 @@ const config = () => ({ database: process.env.NEO4J_DATABASE || "neo4j", routing
   transactionConfig: { timeout: 10_000 } });
 const number = (value: number | { toNumber(): number } | null) => typeof value === "number" ? value : value?.toNumber() ?? 0;
 
-export async function readChatIndexing(ownerUserId: string, billId: string | null = null): Promise<ChatIndexing> {
+export async function readChatIndexing(ownerUserId: string, billId: string | null = null, billIds: string[] | null = null): Promise<ChatIndexing> {
   const { records } = await getNeo4jDriver().executeQuery(
     `MATCH (:User {id: $ownerUserId})-[:UPLOADED]->(b:Bill)
-     WHERE $billId IS NULL OR b.billId = $billId
+     WHERE ($billId IS NULL OR b.billId = $billId)
+       AND ($billIds IS NULL OR b.billId IN $billIds)
      OPTIONAL MATCH (b)-[:HAS_EMBEDDINGS]->(e:DocumentEmbeddings)
      RETURN count(DISTINCT b) AS totalBills,
        count(DISTINCT CASE WHEN e.status = 'ready' AND e.profile = $profile
          AND e.model = $model AND e.dimensions = $dimensions AND e.chunkCount > 0
          THEN b END) AS readyBills`,
-    { ownerUserId, billId, profile: EMBEDDING_PROFILE, model: EMBEDDING_MODEL, dimensions: int(EMBEDDING_DIMENSIONS) }, config());
+    { ownerUserId, billId, billIds, profile: EMBEDDING_PROFILE, model: EMBEDDING_MODEL, dimensions: int(EMBEDDING_DIMENSIONS) }, config());
   return { totalBills: number(records[0]?.get("totalBills")), readyBills: number(records[0]?.get("readyBills")) };
 }
 
-export async function retrieveChatSources(ownerUserId: string, vector: number[], billId: string | null = null): Promise<ChatSource[]> {
+export async function retrieveChatSources(ownerUserId: string, vector: number[], billId: string | null = null, billIds: string[] | null = null): Promise<ChatSource[]> {
   if (vector.length !== EMBEDDING_DIMENSIONS || vector.some((n) => !Number.isFinite(n)) || !vector.some((n) => n !== 0)) {
     throw new Error("Invalid question embedding.");
   }
@@ -35,6 +36,7 @@ export async function retrieveChatSources(ownerUserId: string, vector: number[],
     `MATCH (:User {id: $ownerUserId})-[:UPLOADED]->(b:Bill)
        -[:HAS_EMBEDDINGS]->(e:DocumentEmbeddings)-[:HAS_CHUNK]->(c:DocumentChunk)
      WHERE ($billId IS NULL OR b.billId = $billId)
+       AND ($billIds IS NULL OR b.billId IN $billIds)
        AND e.status = 'ready' AND e.profile = $profile AND e.model = $model
        AND e.dimensions = $dimensions AND c.ownerUserId = $ownerUserId
        AND c.billId = b.billId AND c.embeddingId = e.embeddingId
@@ -44,7 +46,7 @@ export async function retrieveChatSources(ownerUserId: string, vector: number[],
      RETURN b.billId AS billId, b.billNumber AS billNumber, b.sourceFile AS fileName, c.chunkId AS chunkId,
        c.page AS page, c.text AS text, score
      ORDER BY score DESC, chunkId ASC LIMIT $limit`,
-    { ownerUserId, billId, vector, profile: EMBEDDING_PROFILE, model: EMBEDDING_MODEL,
+    { ownerUserId, billId, billIds, vector, profile: EMBEDDING_PROFILE, model: EMBEDDING_MODEL,
       dimensions: int(EMBEDDING_DIMENSIONS), minimum, limit: int(6) }, config());
   return records.map((row, index) => ({ id: `S${index + 1}`, billId: row.get("billId"), billNumber: row.get("billNumber"),
     chunkId: row.get("chunkId"), fileName: row.get("fileName") || "Saved bill", page: number(row.get("page")),
@@ -52,17 +54,18 @@ export async function retrieveChatSources(ownerUserId: string, vector: number[],
 }
 
 /** Exhaustive scoped summaries must inspect every chunk, never a semantic top-k. */
-export async function readSummarySources(ownerUserId: string, billId: string | null): Promise<ChatSource[] | null> {
+export async function readSummarySources(ownerUserId: string, billId: string | null, billIds: string[] | null = null): Promise<ChatSource[] | null> {
   const { records } = await getNeo4jDriver().executeQuery(
     `MATCH (:User {id: $ownerUserId})-[:UPLOADED]->(b:Bill)
        -[:HAS_EMBEDDINGS]->(e:DocumentEmbeddings)-[:HAS_CHUNK]->(c:DocumentChunk)
      WHERE ($billId IS NULL OR b.billId = $billId)
+       AND ($billIds IS NULL OR b.billId IN $billIds)
        AND e.status = 'ready' AND e.profile = $profile AND e.model = $model
        AND e.dimensions = $dimensions AND c.ownerUserId = $ownerUserId
        AND c.billId = b.billId AND c.embeddingId = e.embeddingId AND c.text IS NOT NULL
      RETURN b.billId AS billId, b.billNumber AS billNumber, b.sourceFile AS fileName, c.chunkId AS chunkId,
        c.page AS page, c.text AS text ORDER BY billId, page, c.position LIMIT 41`,
-    { ownerUserId, billId, profile: EMBEDDING_PROFILE, model: EMBEDDING_MODEL, dimensions: int(EMBEDDING_DIMENSIONS) }, config());
+    { ownerUserId, billId, billIds, profile: EMBEDDING_PROFILE, model: EMBEDDING_MODEL, dimensions: int(EMBEDDING_DIMENSIONS) }, config());
   if (records.length > 40 || records.reduce((size, row) => size + Array.from(String(row.get("text"))).length, 0) > 40_000) return null;
   return records.map((row, index) => ({ id: `S${index + 1}`, billId: row.get("billId"), billNumber: row.get("billNumber"), chunkId: row.get("chunkId"),
     fileName: row.get("fileName") || "Saved bill", page: number(row.get("page")), text: String(row.get("text")), score: 1 }));

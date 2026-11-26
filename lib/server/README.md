@@ -115,6 +115,17 @@ Financial organization quality checks:
   recovers unique explicit document/order/shipping identifiers, and flags arithmetic
   discrepancies without changing printed amounts. It leaves conflicting identifiers
   blank. Arithmetic checks skip ambiguous numeric formats and adjusted item rows.
+- Bill-date validation rejects billing periods, durations, and due/payment dates as
+  issue dates. After chunk merging, explicit Bill Date/Invoice Date evidence in
+  original OCR can recover the printed date; conflicting explicit dates stay blank.
+  Printed numeric date order is not guessed.
+- Currency recovery recognizes `Rs.` as an ambiguous rupee abbreviation. Single
+  Latin-letter symbols next to integer values require monetary context, preventing
+  OCR fragments such as `P 3` in advertisements from establishing a currency.
+- Python's `ocr/currency_glyphs.py` restores known misencoded rupee glyphs using
+  rendered-font fingerprints. Unknown standalone currency markers have bounded
+  visual OCR fallback; agreeing symbols and unchanged amounts are required.
+  Unresolved glyphs produce review warnings. See the extraction architecture guide.
 - `order_id` and `shipping_method` are distinct receipt-sheet fields, persisted as
   `Bill.orderId` and `Bill.shippingMethod`. Old snapshots remain readable unchanged.
 - Source OCR remains immutable. New prompts and checks apply to new workflow runs;

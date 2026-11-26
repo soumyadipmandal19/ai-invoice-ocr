@@ -8,18 +8,22 @@ import { SheetGrid } from "@/components/sheet-grid";
 import { BILL_ESSENTIAL_COLUMNS, ITEM_ESSENTIAL_COLUMNS, EMPTY_BILL_FILTERS, billReview, receiptValues, filterWorkspaceRecords, selectSessionColumns, buildSessionSheets, canEditSessionCell, editSessionWorkbook, sessionColumnLabel, type BillFilters } from "@/lib/bills/session-workbook";
 import { currencyCode } from "@/lib/financial/currency";
 import { buildExcelWorkbook } from "@/lib/bills/excel";
-import { sheetToCsv, type FinancialWorkbook } from "@/lib/financial/workbook";
+import { recoverMissingWorkbookItems, sheetToCsv, type FinancialWorkbook } from "@/lib/financial/workbook";
 import type { WorkspaceRecord } from "@/types/workspace/record";
 import DeleteBillDialog from "@/components/delete-bill-dialog";
 
 export type SessionWorkbookHandle = { openReview: () => void };
 const control = "h-8 max-w-full rounded-md border border-line bg-background px-2 text-sm text-muted";
 
-export default function SessionWorkbook({ records, onReview, onWorkbookChange, onDeleted, deleteDisabled = false, ref }: {
+export default function SessionWorkbook({ records: storedRecords, onReview, onWorkbookChange, onDeleted, deleteDisabled = false, ref }: {
   ref?: Ref<SessionWorkbookHandle>; records: WorkspaceRecord[];
   onReview: (id: string) => void; onWorkbookChange: (id: string, workbook: FinancialWorkbook) => void;
   onDeleted: (id: string) => void; deleteDisabled?: boolean;
 }) {
+  const records = useMemo(() => storedRecords.map((record) => {
+    const workbook = recoverMissingWorkbookItems(record.workbook, record.result);
+    return workbook === record.workbook ? record : { ...record, workbook };
+  }), [storedRecords]);
   const [sheetId, setSheetId] = useWorkspaceState("workbook.sheet", "receipts");
   const [filters, setFilters] = useWorkspaceState<BillFilters>("workbook.filters", () => ({ ...EMPTY_BILL_FILTERS }));
   const [columnChoices, setColumnChoices] = useWorkspaceState<Record<string, string[]>>("workbook.columns", () => ({}));
@@ -43,6 +47,8 @@ export default function SessionWorkbook({ records, onReview, onWorkbookChange, o
   const vendors = [...new Set(records.map((record) => receiptValues(record).merchant_name).filter(Boolean))].sort();
   const currencies = [...new Set(records.map((record) => { const value = receiptValues(record).currency; return currencyCode(value) || value || "unknown"; }))].sort();
   const activeFilters = Object.values(filters).some(Boolean);
+  const itemlessBills = visible.filter((record) => record.workbook && receiptValues(record).document_type !== "bank_statement"
+    && !record.workbook.sheets.find((entry) => entry.id === "items")?.rows.length).length;
 
   function updateFilter(key: keyof BillFilters, value: string) {
     setFilters((current) => ({ ...current, [key]: value })); setSelected({ row: 1, column: 0 });
@@ -101,6 +107,7 @@ export default function SessionWorkbook({ records, onReview, onWorkbookChange, o
         <label className="flex items-center gap-1.5 text-xs text-subtle">To<input aria-label="Bill date to" type="date" value={filters.dateTo} min={filters.dateFrom || undefined} onChange={(event) => updateFilter("dateTo", event.target.value)} className={`${control} w-36`} /></label>
 
       </div>
+      {sheetId === "items" && itemlessBills > 0 && <p role="status" className="border-b border-line px-3 py-2 text-xs text-amber-200">{itemlessBills} bill{itemlessBills === 1 ? " has" : "s have"} no organized item rows. Open the bill and source to review missing products.</p>}
       {exportError && <p role="alert" className="px-3 py-2 text-sm text-red-200">{exportError}</p>}
       <SheetGrid stateKey={`combined:${sheet.id}:${JSON.stringify(filters)}`} key={`${sheet.id}-${JSON.stringify(filters)}`} columnKeys={sheet.columns} rows={[sheet.columns.map(sessionColumnLabel), ...sheet.rows]} bottomBar={<WorkbookTabs sheets={sheets.map((entry) => ({ id: entry.id, name: entry.name, count: entry.rows.length }))} activeId={sheet.id} onChange={(id) => { setSheetId(id); setSelected({ row: 1, column: 0 }); }} />} widths={sheet.columns.map((column) => ["notes", "review_notes", "File", "product_name"].includes(column) ? 260 : column === "merchant_name" ? 200 : ["currency", "quantity", "pages", "Index"].includes(column) ? 100 : 150)} selected={selected} onSelect={setSelected} editable={(row, column) => canEditSessionCell(sheet, row, column)} cellWarning={(row, column) => row > 0 ? sheet.sources[row - 1]?.issues?.[sheet.columns[column]] : undefined} rowActions={sheet.id !== "items" ? deleteAction : undefined} emptyMessage={activeFilters ? "No bills match these filters. Try clearing or changing them." : sheetId === "needs-review" ? "No bills need review." : undefined} onEdit={(row, column, value) => { const update = editSessionWorkbook(records, sheet, row, column, value); if (update) onWorkbookChange(update.id, update.workbook); }} />
       {deleteTarget && <DeleteBillDialog key={deleteTarget.id} record={deleteTarget} onCancel={() => setDeleteTarget(null)} onDeleted={(id) => { setDeleteTarget(null); setSelected({ row: 1, column: 0 }); onDeleted(id); }} />}

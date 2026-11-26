@@ -29,6 +29,9 @@ export type BillNode = BillRecord & {
   workbookJson: string;
   classificationJson: string;
   normalizationWarnings: string[];
+  itemRecoveryWorkbookJson?: string; // Current repaired view; original snapshots remain unchanged.
+  itemRecoverySourceHash?: string;
+  itemRecoveryAt?: string;
   // Legacy fields: read/migrated for older records. New writes use DocumentEmbeddings.
   embeddingStatus?: "queued" | "ready" | "failed";
   embeddingProfile?: string;

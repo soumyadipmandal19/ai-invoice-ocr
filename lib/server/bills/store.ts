@@ -4,6 +4,9 @@ import { getNeo4jDriver } from "@/lib/server/database/neo4j";
 import { ensureDatabaseSchema, type BillNode, type BillItemNode, type OCRExtractionNode, type LLMResultNode } from "@/lib/server/database/schema";
 import type { WorkflowArtifacts } from "@/types/workflow/artifacts";
 import type { SavedBillPage } from "@/types/bills/responses";
+import { recoverMissingWorkbookItems } from "@/lib/financial/workbook";
+import type { FinancialWorkbook } from "@/lib/financial/workbook";
+import type { ExtractionResult } from "@/types/extraction/result";
 import { int } from "neo4j-driver";
 
 export class BillOwnerMissingError extends Error {}
@@ -43,6 +46,10 @@ export async function storeBill(bill: BillNode, items: BillItemNode[], artifacts
        MERGE (item:BillItem {itemId: properties.itemId})
        ON CREATE SET item += properties
        MERGE (b)-[:HAS_ITEM]->(item))
+     WITH b
+     OPTIONAL MATCH (b)-[:HAS_ITEM]->(savedItem:BillItem)
+     WITH b, count(DISTINCT savedItem) AS savedItemCount
+     SET b.itemCount = savedItemCount
      RETURN b.billId AS billId, b.itemCount AS itemCount`,
     { ownerUserId: bill.ownerUserId, billId: bill.billId, bill, items, ocr, llm, itemCount: items.length, uploadKey: uploadKey || null },
     { database: process.env.NEO4J_DATABASE || "neo4j" },
@@ -91,7 +98,7 @@ export async function readBillOutputs(billId: string, ownerUserId: string) {
      OPTIONAL MATCH (b)-[:HAS_LLM_RESULT]->(llm:LLMResult)
      RETURN b.billId AS billId, b.sourceFile AS sourceFile, b.createdAt AS createdAt,
        ocr.dataJson AS ocrJson, llm.dataJson AS llmJson,
-       coalesce(llm.workbookJson, b.workbookJson) AS workbookJson`,
+       coalesce(b.itemRecoveryWorkbookJson, llm.workbookJson, b.workbookJson) AS workbookJson`,
     { ownerUserId, billId }, { database: process.env.NEO4J_DATABASE || "neo4j", routing: "READ" },
   );
   if (!records.length) return null;
@@ -100,7 +107,9 @@ export async function readBillOutputs(billId: string, ownerUserId: string) {
     const value = record.get(key);
     return typeof value === "string" ? JSON.parse(value) : null;
   };
-  return { billId: record.get("billId"), sourceFile: record.get("sourceFile"), createdAt: record.get("createdAt"), ocr: parse("ocrJson"), llm: parse("llmJson"), workbook: parse("workbookJson") };
+  const ocr = parse("ocrJson") as ExtractionResult | null;
+  const workbook = recoverMissingWorkbookItems(parse("workbookJson") as FinancialWorkbook | null, ocr);
+  return { billId: record.get("billId"), sourceFile: record.get("sourceFile"), createdAt: record.get("createdAt"), ocr, llm: parse("llmJson"), workbook };
 }
 
 export async function listUserBills(ownerUserId: string, offset = 0, limit = 25): Promise<SavedBillPage> {
@@ -112,7 +121,7 @@ export async function listUserBills(ownerUserId: string, offset = 0, limit = 25)
      OPTIONAL MATCH (b)-[:HAS_LLM_RESULT]->(llm:LLMResult)
      RETURN b.billId AS billId, b.sourceFile AS sourceFile, b.createdAt AS createdAt,
        b.classificationJson AS classificationJson, ocr.dataJson AS ocrJson,
-       coalesce(llm.workbookJson, b.workbookJson) AS workbookJson
+       coalesce(b.itemRecoveryWorkbookJson, llm.workbookJson, b.workbookJson) AS workbookJson
      ORDER BY createdAt ASC, billId ASC`,
     { ownerUserId, offset: int(offset), fetchLimit: int(limit + 1) },
     { database: process.env.NEO4J_DATABASE || "neo4j", routing: "READ" },
@@ -123,8 +132,10 @@ export async function listUserBills(ownerUserId: string, offset = 0, limit = 25)
         const value = record.get(key);
         return typeof value === "string" ? JSON.parse(value) : null;
       };
+      const ocr = parse("ocrJson") as ExtractionResult | null;
+      const workbook = recoverMissingWorkbookItems(parse("workbookJson") as FinancialWorkbook | null, ocr);
       return { billId: record.get("billId"), sourceFile: record.get("sourceFile") || "", createdAt: record.get("createdAt") || "",
-        classification: parse("classificationJson"), workbook: parse("workbookJson"), ocr: parse("ocrJson") };
+        classification: parse("classificationJson"), workbook, ocr };
     }),
     nextOffset: records.length > limit ? offset + limit : null,
   };

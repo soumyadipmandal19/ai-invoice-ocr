@@ -1,3 +1,4 @@
+import { recoverExplicitProductRows, RECOVERED_ITEM_NOTE } from "@/lib/financial/product-rows";
 import type { Classification } from "@/lib/classification/document";
 import type { ExtractionResult } from "@/types/extraction/result";
 import type { OrganizedFinancialData } from "@/lib/financial/organization";
@@ -42,7 +43,7 @@ export function organizeFinancialDocument(
       id: "items", name: "Products", columns: [...PRODUCT_COLUMNS],
       rows: currencies.items.map((item, index) => row(PRODUCT_COLUMNS, {
         ...Object.fromEntries(["document_date", "merchant_name", "document_number", "currency", "payment_method"].map((key) => [key, receipt[key] || ""])),
-        ...item, ...common, line_number: String(index + 1), notes: "Mapped by LLM; verify against the source.",
+        ...item, ...common, line_number: String(index + 1), notes: item.notes || "Mapped by LLM; verify against the source.",
       })),
     },
     {
@@ -84,4 +85,30 @@ export function sheetToCsv(sheet: CsvSheet): string {
     return `"${safe.replace(/"/g, '""')}"`;
   };
   return "\ufeff" + [sheet.columns, ...sheet.rows].map((row) => row.map(quote).join(",")).join("\r\n") + "\r\n";
+}
+
+
+/** Read-only repair of empty legacy item sheets; originals and existing items stay intact. */
+export function recoverMissingWorkbookItems(workbook: FinancialWorkbook | null, document: ExtractionResult | null): FinancialWorkbook | null {
+  if (!workbook || !document || !Array.isArray(document.pages)) return workbook;
+  const originalItems = workbook.sheets.find((sheet) => sheet.id === "items");
+  if (originalItems?.rows.length) return workbook;
+  const receipt = workbook.sheets.find((sheet) => sheet.id === "receipts");
+  if (!receipt?.rows[0]) return workbook;
+  const values = Object.fromEntries(receipt.columns.map((column, index) => [column, receipt.rows[0][index] || ""]));
+  if (values.document_type === "bank_statement") return workbook;
+  const recovered = recoverExplicitProductRows(document);
+  if (!recovered.length) return workbook;
+  const currencies = reconcileFinancialCurrencies(values, recovered, document.pages.map((page) => page.text).join("\n"));
+  const columns = originalItems?.columns.length ? originalItems.columns : [...PRODUCT_COLUMNS];
+  const items: CsvSheet = { id: "items", name: originalItems?.name || "Products", columns,
+    rows: currencies.items.map((item, index) => {
+      const row = { ...values, ...item, line_number: String(index + 1), review_status: "Needs review", notes: RECOVERED_ITEM_NOTE };
+      return columns.map((column) => row[column as keyof typeof row] || "");
+    }) };
+  return { ...workbook,
+    sheets: originalItems ? workbook.sheets.map((sheet) => sheet === originalItems ? items : sheet) : [items, ...workbook.sheets],
+    warnings: [...new Set([...workbook.warnings.filter((warning) => !/^No verified product rows were mapped\./.test(warning)),
+      `Recovered ${recovered.length} product rows from the saved OCR item table. Original stored results were not rewritten; verify against the source.`, ...currencies.warnings])],
+  };
 }

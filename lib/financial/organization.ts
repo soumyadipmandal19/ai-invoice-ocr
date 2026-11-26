@@ -1,4 +1,5 @@
-import { financialArithmeticWarnings, matchesReceiptMeaning, reconcileReceiptIdentifiers } from "@/lib/financial/validation";
+import { recoverExplicitProductRows } from "@/lib/financial/product-rows";
+import { financialArithmeticWarnings, matchesReceiptMeaning, reconcileReceiptDate, reconcileReceiptIdentifiers } from "@/lib/financial/validation";
 import type { ExtractionResult } from "@/types/extraction/result";
 
 export const MAX_ORGANIZATION_CHUNK_BYTES = 5_000;
@@ -200,13 +201,21 @@ export function validateOrganizationResponse(data: unknown, sources: Organizatio
   return { receipt, items, warnings: [...new Set(warnings)] };
 }
 
-export function mergeOrganizationChunks(chunks: OrganizationChunkResult[], bankStatement = false): OrganizedFinancialData {
+export function mergeOrganizationChunks(chunks: OrganizationChunkResult[], bankStatement = false, document?: Pick<ExtractionResult, "pages">): OrganizedFinancialData {
   const warnings = chunks.flatMap((chunk) => chunk.warnings);
   const receipt: Record<string, string> = {};
   for (const key of RECEIPT_MAPPING_FIELDS) {
     const values = [...new Set(chunks.map((chunk) => chunk.receipt[key]).filter(Boolean))];
     if (values.length === 1) receipt[key] = values[0];
     else if (values.length > 1) warnings.push(`Conflicting model mappings for ${key} were left blank. Check the source document.`);
+  }
+  if (document) {
+    const dateWarnings = reconcileReceiptDate(receipt, document.pages);
+    if (dateWarnings !== null) {
+      const conflict = warnings.indexOf("Conflicting model mappings for document_date were left blank. Check the source document.");
+      if (conflict >= 0) warnings.splice(conflict, 1);
+      warnings.push(...dateWarnings);
+    }
   }
   const items: Record<string, string>[] = [];
   const seen = new Set<string>();
@@ -215,6 +224,13 @@ export function mergeOrganizationChunks(chunks: OrganizationChunkResult[], bankS
       if (bankStatement || seen.has(item.source)) continue;
       seen.add(item.source);
       items.push({ ...item.values, source_page: String(item.page) });
+    }
+  }
+  if (!bankStatement && !items.length && document) {
+    const recovered = recoverExplicitProductRows(document);
+    if (recovered.length) {
+      items.push(...recovered);
+      warnings.push(`Recovered ${recovered.length} product rows from the explicit OCR item table because model mapping supplied no verified products. Verify against the source.`);
     }
   }
   if (bankStatement) warnings.push("Bank statement transactions are not treated as product purchases.");

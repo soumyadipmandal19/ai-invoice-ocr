@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatResponse, ChatSource } from "@/types/chat";
 import ChatAnswer from "@/components/chat-answer";
 
-type Message = { id: number; role: "user" | "assistant"; text: string; sources?: ChatSource[] };
+type Message = { id: number; role: "user" | "assistant"; text: string; sources?: ChatSource[]; failed?: boolean };
 type IconName = "chat" | "close" | "send" | "new" | "document" | "user";
 
 function ChatIcon({ name, className = "size-5" }: { name: IconName; className?: string }) {
@@ -35,7 +35,6 @@ export default function DocumentChat({ userName }: { userName: string }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const [indexing, setIndexing] = useState<ChatResponse["indexing"] | null>(null);
   const conversationDocument = useRef<string | null>(null);
   const pending = useRef<AbortController | null>(null);
@@ -49,7 +48,7 @@ export default function DocumentChat({ userName }: { userName: string }) {
     if (open && messageList.current) {
       messageList.current.scrollTop = messages.length ? messageList.current.scrollHeight : 0;
     }
-  }, [messages, open, busy, error]);
+  }, [messages, open, busy]);
   useEffect(() => () => pending.current?.abort(), []);
 
   function close() {
@@ -61,7 +60,7 @@ export default function DocumentChat({ userName }: { userName: string }) {
     pending.current?.abort();
     pending.current = null;
     conversationDocument.current = null;
-    setBusy(false); setMessages([]); setDraft(""); setError(""); setIndexing(null);
+    setBusy(false); setMessages([]); setDraft(""); setIndexing(null);
     input.current?.focus();
   }
 
@@ -70,14 +69,14 @@ export default function DocumentChat({ userName }: { userName: string }) {
     const text = draft.trim();
     if (!text || busy) return;
     const userMessage: Message = { id: nextId.current++, role: "user", text };
-    const history = messages.slice(-4).map((message) => ({ role: message.role, content: Array.from(message.text).slice(0, 1000).join("") }));
+    const history = messages.filter((message) => !message.failed).slice(-4).map((message) => ({ role: message.role, content: Array.from(message.text).slice(0, 1000).join("") }));
     // Respect the endpoint's body limit even with multibyte text.
     while (history.length && new TextEncoder().encode(JSON.stringify({ question: text, history, contextBillId: conversationDocument.current })).length > 8000) history.shift();
     const controller = new AbortController();
     pending.current = controller;
     setMessages((current) => [...current, userMessage]);
     setDraft("");
-    setError(""); setBusy(true);
+    setBusy(true);
     input.current?.focus();
     try {
       const response = await fetch("/api/chat", { method: "POST", cache: "no-store", signal: controller.signal,
@@ -92,8 +91,10 @@ export default function DocumentChat({ userName }: { userName: string }) {
       conversationDocument.current = answer.contextBillId ?? null;
     } catch (error) {
       if (pending.current === controller && !controller.signal.aborted) {
-        setError(error instanceof Error ? error.message : "Unable to answer. Please try again.");
-        setMessages((current) => current.filter((message) => message.id !== userMessage.id));
+        const reply: Message = { id: nextId.current++, role: "assistant", failed: true,
+          text: error instanceof Error ? error.message : "Unable to answer. Please try again." };
+        // Keep the failed exchange visible, but omit it from future model history.
+        setMessages((current) => [...current.map((message) => message.id === userMessage.id ? { ...message, failed: true } : message), reply]);
         setDraft(text);
       }
     } finally {
@@ -110,7 +111,7 @@ export default function DocumentChat({ userName }: { userName: string }) {
           <header className="flex shrink-0 items-center gap-2.5 border-b border-line px-4 py-3.5">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-ink"><ChatIcon name="chat" className="size-4" /></span>
             <div className="min-w-0 flex-1"><h2 id="document-chat-title" className="text-[13px] font-semibold">Document assistant</h2><p className="mt-0.5 text-[10px] text-subtle">Here to help with your bills</p></div>
-            <button type="button" title="New chat" aria-label="New chat" disabled={!messages.length && !draft && !error} onClick={reset} className="rounded-full p-1.5 text-subtle transition-colors hover:bg-raised hover:text-foreground disabled:cursor-default disabled:opacity-30"><ChatIcon name="new" className="size-4" /></button>
+            <button type="button" title="New chat" aria-label="New chat" disabled={!messages.length && !draft} onClick={reset} className="rounded-full p-1.5 text-subtle transition-colors hover:bg-raised hover:text-foreground disabled:cursor-default disabled:opacity-30"><ChatIcon name="new" className="size-4" /></button>
             <button type="button" title="Close chat" aria-label="Close chat" onClick={close} className="flex size-7 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-80"><ChatIcon name="close" className="size-3.5" /></button>
           </header>
 
@@ -124,13 +125,12 @@ export default function DocumentChat({ userName }: { userName: string }) {
               <div role="log" aria-label="Chat messages" aria-live="polite" aria-relevant="additions" className="space-y-4">
                 {messages.map((message) => <div key={message.id} className={`flex items-start gap-2.5 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
                   <span aria-hidden="true" className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${message.role === "user" ? "bg-raised text-muted" : "bg-accent-soft text-accent"}`}><ChatIcon name={message.role === "user" ? "user" : "chat"} className="size-3.5" /></span>
-                  <div className="min-w-0 max-w-[85%]"><p className={`mb-1.5 text-[10px] font-medium text-muted ${message.role === "user" ? "text-right" : ""}`}>{message.role === "user" ? "You" : "Assistant"}</p><div className={`rounded-2xl px-3 py-2.5 text-[13px] leading-5 [overflow-wrap:anywhere] ${message.role === "user" ? "rounded-tr-sm bg-accent-selected text-foreground" : "rounded-tl-sm border border-line bg-surface text-body"}`}>{message.role === "assistant" ? <ChatAnswer text={message.text} /> : <p className="whitespace-pre-wrap">{message.text}</p>}
+                  <div className="min-w-0 max-w-[85%]"><p className={`mb-1.5 text-[10px] font-medium text-muted ${message.role === "user" ? "text-right" : ""}`}>{message.role === "user" ? "You" : "Assistant"}</p><div className={`rounded-2xl px-3 py-2.5 text-[13px] leading-5 [overflow-wrap:anywhere] ${message.role === "user" ? "rounded-tr-sm bg-accent-selected text-foreground" : message.failed ? "rounded-tl-sm border border-red-400/40 bg-red-400/10 text-red-300" : "rounded-tl-sm border border-line bg-surface text-body"}`}>{message.role === "assistant" ? <ChatAnswer text={message.text} /> : <p className="whitespace-pre-wrap">{message.text}</p>}
                   {!!message.sources?.length && <DocumentSources sources={message.sources} />}</div>
                 </div></div>)}
               </div>
             )}
             {busy && <p role="status" className="mt-4 text-sm leading-6 text-muted">Thinking<span aria-hidden="true" className="ml-1 inline-flex items-center gap-1 align-middle"><span className="chat-loading-dot" /><span className="chat-loading-dot" /><span className="chat-loading-dot" /></span><span className="sr-only">…</span></p>}
-            {error && <p role="alert" className="mt-4 rounded-lg border border-red-400/30 bg-red-400/10 p-3 text-xs leading-5 text-red-300">{error}</p>}
             {indexing && indexing.readyBills < indexing.totalBills && <p className="mt-3 text-xs leading-5 text-subtle">{indexing.readyBills} of {indexing.totalBills} saved bills are ready for search.</p>}
           </div>
 

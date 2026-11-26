@@ -46,7 +46,11 @@ export async function handleChat(request: Request) {
       return Response.json(result, { headers });
     } finally { activeUsers.delete(user.id); }
   } catch (error) {
-    if (error instanceof RequestError || error instanceof ChatModelError) return Response.json({ error: error.message }, { status: error.status, headers });
+    if (error instanceof RequestError || error instanceof ChatModelError) {
+      const details = error instanceof ChatModelError ? error.details : undefined;
+      return Response.json({ error: error.message, ...details }, { status: error.status,
+        headers: { ...headers, ...(details ? { "Retry-After": String(details.retryAfterSeconds) } : {}) } });
+    }
     return Response.json({ error: "Unable to answer right now. Please retry when the local embedding worker and database are available." }, { status: 503, headers });
   }
 }

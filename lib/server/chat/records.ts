@@ -7,16 +7,6 @@ import type { ChatDocument } from "@/types/chat";
 const config = () => ({ database: process.env.NEO4J_DATABASE || "neo4j", routing: "READ" as const,
   transactionConfig: { timeout: 10_000 } });
 
-export function recordQuestionIntent(question: string): "count" | "files" | "totals" | "summary" | null {
-  const q = question.toLowerCase().replace(/[?!.,]/g, "").replace(/^(please |can you |could you )+/, "").replace(/\s+/g, " ").trim();
-  const docs = "(?:(?:all|the|my|our|uploaded|saved|existing|selected|this|these) )*(?:bills?|invoices?|documents?|files?)";
-  if (new RegExp(`^(?:how many ${docs}(?: (?:are there|do i have|have i uploaded|are uploaded|are saved|are in total|are available))?|(?:what is |tell me |show me )?(?:the )?(?:total )?(?:number|count) of ${docs})$`).test(q)) return "count";
-  if (new RegExp(`^(?:summarize|summarise|give me a summary of|provide a summary of) ${docs}$`).test(q)) return "summary";
-  if (new RegExp(`^(?:list(?: down)?|show(?: me)?|what are|give me)(?: (?:all|the|my|uploaded|saved|selected|this))* (?:file ?names?|document names?|invoice names?|bill names?|files|documents|bills|invoices)(?: (?:i have uploaded|i uploaded|uploaded|in my account))?$`).test(q)) return "files";
-  if (/^(?:(?:what is|show me|tell me|calculate) )?(?:the |my )?(?:total spending|total expenses|total spend|total amount|sum of (?:all |my |the )?(?:bill|invoice) (?:totals|amounts)|total of (?:all |my |the )?(?:bills|invoices))(?: (?:across|for|of|in) (?:all |my |the |saved |uploaded |selected )*(?:bills|invoices|documents|files))?$/.test(q)) return "totals";
-  return null;
-}
-
 export async function listChatDocuments(ownerUserId: string, billId: string | null = null, offset = 0) {
   const { records } = await getNeo4jDriver().executeQuery(
     `MATCH (:User {id: $ownerUserId})-[:UPLOADED]->(b:Bill)

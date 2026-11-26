@@ -13,6 +13,15 @@ for (const code of codes) {
 for (const [symbol, code] of Object.entries({ "US$": "USD", "CA$": "CAD", "C$": "CAD", "AU$": "AUD", "A$": "AUD", "NZ$": "NZD", "HK$": "HKD", "SG$": "SGD", "S$": "SGD", "NT$": "TWD", "R$": "BRL" })) {
   symbols.set(symbol, new Set([code]));
 }
+// Rs/Rs. are shared by rupee currencies, including INR even though Intl
+// displays INR as ₹. They can agree with ₹ but cannot identify INR alone.
+const rupees = new Set([...(symbols.get("Rs") || []), "INR", "NPR", "PKR", "LKR", "MUR", "SCR"]);
+symbols.set("Rs", rupees);
+symbols.set("Rs.", rupees);
+
+function isCurrencyIndicator(value: string | undefined): value is string {
+  return !!value && (codes.has(value.trim().toUpperCase()) || symbols.has(value.trim()) || /^\p{Sc}$/u.test(value.trim()));
+}
 
 /** Ambiguous symbols such as $ and ¥ deliberately have no unique code. */
 export function currencyCode(value: string | undefined): string | null {
@@ -35,7 +44,14 @@ export function priceCurrencies(text: string): string[] {
   // Do not join lines: a currency on one row must not attach to another row's number.
   for (const line of text.split(/\r?\n/)) {
     const prices = new RegExp(`(?<![\\p{L}\\p{N}_-])(?:(${token})\\s*${amount}|${amount}\\s*(${token}))(?![\\p{L}\\p{N}_-])`, "gu");
-    for (const match of line.matchAll(prices)) found.add(match[1] || match[2]);
+    for (const match of line.matchAll(prices)) {
+      const currency = match[1] || match[2];
+      // Single Latin letters occur in OCR noise, page labels and advertisements.
+      // An isolated "P 3" is not enough evidence for Botswana pula.
+      if (/^[A-Za-z]$/.test(currency) && !/\d[.,]\d{2}\b/.test(match[0])
+        && !/\b(?:currency|price|total|amount|balance|subtotal|tax|paid|cost|charges?)\b/i.test(line)) continue;
+      found.add(currency);
+    }
     const label = new RegExp(`(?:\\bcurrency\\s*[:=]?\\s*|\\b(?:amounts?|prices?|total|balance|unit price)\\s*(?:in\\s+|\\(\\s*))(${token})`, "giu");
     for (const match of line.matchAll(label)) found.add(match[1]);
   }
@@ -61,10 +77,14 @@ export function reconcileFinancialCurrencies(
 ) {
   const warnings: string[] = [];
   const evidence = priceCurrencies(sourceText);
-  const mapped = receipt.currency;
+  const mapped = isCurrencyIndicator(receipt.currency) ? receipt.currency : undefined;
   // Existing mappings have already passed literal OCR citation validation.
   const result = resolve([...evidence, ...(mapped ? [mapped] : [])]);
   const updatedReceipt = { ...receipt };
+  if (receipt.currency && !mapped) {
+    delete updatedReceipt.currency;
+    warnings.push("The model's currency value was not a supported currency indicator and was omitted.");
+  }
   if (result.conflict) {
     delete updatedReceipt.currency;
     warnings.push("Conflicting currencies were found in the document; bill currency was left blank. Review the printed prices and currency labels.");
@@ -75,9 +95,10 @@ export function reconcileFinancialCurrencies(
   const updatedItems = items.map((item) => {
     const local = resolve([
       ...["unit_price", "line_total", "tax", "discount"].flatMap((key) => priceCurrencies(item[key] || "")),
-      ...(item.currency ? [item.currency] : []),
+      ...(isCurrencyIndicator(item.currency) ? [item.currency] : []),
     ]);
     const updated = { ...item };
+    if (item.currency && !isCurrencyIndicator(item.currency)) delete updated.currency;
     if (local.conflict) {
       // An empty value also prevents workbook inheritance of a bill currency.
       updated.currency = "";

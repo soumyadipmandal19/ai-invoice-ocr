@@ -78,7 +78,7 @@ export const classifyUploadedDocument = inngest.createFunction(
         const saved = await readClassificationJob(jobId);
         if (saved?.workbook) return { sheetCount: saved.workbook.sheets.length };
         const document = await readClassificationInput(jobId);
-        const organization = mergeOrganizationChunks(mapped, result.documentType === "bank_statement");
+        const organization = mergeOrganizationChunks(mapped, result.documentType === "bank_statement", document);
         const workbook = organizeFinancialDocument(document, result, { documentId: jobId, organization });
         if (!workbook) throw new NonRetriableError("Financial workbook was not produced.");
         await stageClassificationWorkbook(jobId, result, workbook, { ocr: document, organization, mappingResults: mapped });

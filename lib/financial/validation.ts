@@ -1,13 +1,46 @@
 import type { OrganizationSource } from "@/lib/financial/organization";
+import type { ExtractionResult } from "@/types/extraction/result";
 
 const ORDER_LABEL = /\border\s*(?:id|number|no\.?)\s*[:=#]/i;
 const SHIPPING_LABEL = /\b(?:ship(?:ping)?|delivery)\s*(?:mode|method)\s*[:=]/i;
 
 /** Literal evidence alone cannot establish that a value has the right meaning. */
 export function matchesReceiptMeaning(key: string, source: string) {
+  if (key === "document_date" && /\b(?:period|duration|due\s*date|delivery\s*date|order\s*date|payment\s*date)\b/i.test(source)
+    && !/\b(?:bill|invoice|receipt|statement|issue|issued|transaction)\s*date\b/i.test(source)) return false;
   if (key === "document_number" && ORDER_LABEL.test(source) && !/\b(?:invoice|receipt|bill)\s*(?:number|no\.?|#)/i.test(source)) return false;
   if (key === "payment_method" && SHIPPING_LABEL.test(source) && !/\bpayment\s*(?:mode|method)\s*[:=]/i.test(source)) return false;
   return true;
+}
+
+const printedDate = /^(?:\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})(?![\d/-])/i;
+
+/** Resolve chunk disagreement only from explicit date labels in original OCR.
+ * Keep the printed value; numeric date order is never guessed. */
+export function reconcileReceiptDate(receipt: Record<string, string>, pages: Pick<ExtractionResult, "pages">["pages"]): string[] | null {
+  const candidates: { value: string; priority: number }[] = [];
+  for (const page of pages) {
+    for (const line of page.text.split(/\r?\n/)) {
+      const labels = /\b((?:bill|invoice|receipt|statement|issue|issued|transaction)\s*date|date\s+of\s+issue)\s*[:=]?\s*/gi;
+      for (const match of line.matchAll(labels)) {
+        const value = line.slice(match.index! + match[0].length).match(printedDate)?.[0];
+        if (value) candidates.push({ value, priority: /^(?:statement|transaction)/i.test(match[1]) ? 1 : 2 });
+      }
+      const plain = line.match(/^\s*date\s*[:=]\s*/i);
+      const value = plain && line.slice(plain[0].length).match(printedDate)?.[0];
+      if (value) candidates.push({ value, priority: 0 });
+    }
+  }
+  if (!candidates.length) return null;
+  const priority = Math.max(...candidates.map((candidate) => candidate.priority));
+  const values = new Map(candidates.filter((candidate) => candidate.priority === priority)
+    .map(({ value }) => [value.toLowerCase().replace(/\s+/g, " "), value]));
+  if (values.size === 1) {
+    receipt.document_date = [...values.values()][0];
+    return [];
+  }
+  delete receipt.document_date;
+  return ["Conflicting explicit document dates were left blank. Check the source document."];
 }
 
 /** Recover only explicit, unambiguous identifiers; never infer financial amounts. */

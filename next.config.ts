@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  // The authenticated workspace renders per request. Avoid partial static shells
+  // around its session-dependent Suspense and persistent client workspace.
+  cacheComponents: false,
+  partialPrefetching: false,
   // Python is provisioned separately on the host, not bundled as a JS asset.
   outputFileTracingExcludes: {
     "/*": ["./.venv/**/*"],

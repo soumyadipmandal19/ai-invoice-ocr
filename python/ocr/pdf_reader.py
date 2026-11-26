@@ -5,6 +5,7 @@ from pathlib import Path
 import pymupdf
 
 from .recognition import recognize_page
+from .currency_glyphs import normalize_currency_glyphs, recover_currency_regions
 from .structure import extract_structure
 
 MAX_BYTES = 10 * 1024 * 1024
@@ -62,11 +63,25 @@ def extract_pages(document, *, force_ocr=False):
                     "OCR_FAILED", f"OCR failed on page {number}. {error}"
                 ) from error
             method = "ocr" if full else "mixed"
+        words = page.get_text("words", textpage=text_page, sort=True)
+        text, words, recovered = normalize_currency_glyphs(page, text, words, text_page=text_page)
+        if recovered:
+            structured["warnings"].append(
+                f"Page {number}: recovered {recovered} rupee symbols from a verified legacy font glyph."
+            )
+        text, words, visual_recovered, unresolved = recover_currency_regions(page, text, words, text_page=text_page)
+        if visual_recovered:
+            structured["warnings"].append(
+                f"Page {number}: recovered {visual_recovered} currency symbols using targeted visual OCR; review against the document."
+            )
+        if unresolved:
+            structured["warnings"].append(
+                f"Page {number}: an unrecognized currency-like glyph remains before an amount. Confirm the currency against the original document."
+            )
         characters += len(text)
         if characters > MAX_TEXT_CHARACTERS:
             raise ExtractionError("OUTPUT_LIMIT", "This document contains too much text. Split it into smaller PDFs.")
         pages.append({"page": number, "text": text, "method": method})
-        words = page.get_text("words", textpage=text_page, sort=True)
         detected = extract_structure(page, text, words, number, method)
         for key in ("fields", "tables", "warnings"):
             structured[key].extend(detected[key])
